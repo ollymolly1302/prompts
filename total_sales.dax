@@ -1,0 +1,5 @@
+Total Sales =
+SUMX(
+    Sales,
+    Sales[Quantity] * Sales[UnitPrice]
+)
