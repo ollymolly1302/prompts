@@ -1,32 +1,38 @@
 # ERSE Tariff Auto-Download (Power Automate Desktop + PowerShell)
 
-Power Automate Desktop flow that checks the Portuguese regulator's tariff simulator (https://simuladorprecos.erse.pt) once a day and downloads the latest commercial-offers ZIP only if it has been updated since the last check. The ZIP is extracted and the two CSVs are placed in fixed local folders for downstream processing.
+Power Automate Desktop flow that polls the Portuguese regulator's tariff simulator (https://simuladorprecos.erse.pt) once a day, downloads the current commercial-offers ZIP only if its timestamp is not yet in the local archive, and rebuilds two compiled CSVs that contain every historical snapshot with a `SnapshotDate` column for direct ingestion into Power BI.
 
 ## Why this design
 
-- ERSE doesn't update on a fixed schedule — they push new versions whenever a competitor changes a price or launches an offer. Polling daily is the right cadence: rare enough not to hammer the site, frequent enough to catch updates within 24h.
-- The flow short-circuits if the current `csvPath` matches the locally cached one — no wasted work.
-- All real logic lives in one PowerShell action. The PAD flow is just orchestration. Easier to debug than a 20-action native PAD chain.
-- No HTML scraping or browser automation: the simulator exposes the current ZIP URL in a JSON config endpoint (`/config/Settings.json`).
+- ERSE updates on demand (whenever a competitor changes a price or launches an offer), not on a fixed schedule. Polling daily is the right cadence.
+- The check uses the **archive folder itself** as the source of truth: if the parsed timestamp from ERSE's `csvPath` already corresponds to a folder under `Histórico\`, no download. No `_state` file needed.
+- A `Compiled\` folder is rebuilt on every successful run: it concatenates every snapshot in `Histórico\` and adds a `SnapshotDate` column derived from each source folder name. Power BI only needs to load these two compiled files.
 
-## Folder layout (set this up first)
+## Folder layout
 
-Default base folder: `C:\Users\<you>\Downloads\ERSE`. The flow expects:
+Default base folder: `C:\Users\<you>\Downloads\ERSE`. After the first run + any backfill:
 
 ```
 ERSE\
-├── Atual\
-│   ├── Condições Comerciais\   ← latest CondComerciais.csv lands here
-│   └── Preços\                  ← latest Precos_ELEGN.csv lands here
-├── _state\                      ← created automatically; stores last-known csvPath
-└── _tmp\                        ← created/deleted automatically per run
+├── Histórico\
+│   ├── Condições Comerciais\
+│   │   ├── 2024-12-13_182211\CondComerciais.csv
+│   │   ├── 2025-02-21_171922\CondComerciais.csv
+│   │   └── ...
+│   └── Preços\
+│       ├── 2024-12-13_182211\Precos_ELEGN.csv
+│       └── ...
+├── Compiled\
+│   ├── CondComerciais_compiled.csv   ← all snapshots merged + SnapshotDate column
+│   └── Precos_ELEGN_compiled.csv     ← same
+└── _tmp\                              ← created/deleted automatically per run
 ```
 
-You only need to create `Atual\Condições Comerciais\` and `Atual\Preços\` manually. The script handles `_state\` and `_tmp\` itself.
+You don't need to create any subfolders manually — the script and the backfill (see `erse-historical-backfill.md`) create them.
 
 ## How the change-detection works
 
-ERSE's homepage loads runtime config from `/config/Settings.json`, which contains a field called `csvPath` pointing to the current ZIP file:
+ERSE's homepage loads runtime config from `/config/Settings.json`. It contains a field `csvPath` pointing to the current ZIP file, with a timestamp embedded in the filename:
 
 ```json
 {
@@ -35,13 +41,17 @@ ERSE's homepage loads runtime config from `/config/Settings.json`, which contain
 }
 ```
 
-The filename includes a timestamp. When ERSE publishes a new dataset, this value changes. We compare against `_state\last_update.txt`; if equal, no work; if different, download.
+The script:
+1. Fetches `Settings.json`
+2. Parses the timestamp from `csvPath`
+3. Checks whether `Histórico\Condições Comerciais\<YYYY-MM-DD_HHMMSS>\CondComerciais.csv` already exists
+4. If yes → no download, just rebuild Compiled. If no → download, save under that timestamp, then rebuild Compiled.
 
 ## Power Automate Desktop flow — 3 actions
 
 ### Action 1: Definir variável
 - Name: `BASE`
-- Value: `C:\Users\<you>\Downloads\ERSE`
+- Value: `C:\Users\<you>\Downloads\ERSE` (or your real base folder)
 
 ### Action 2: Executar script do PowerShell
 
@@ -52,13 +62,6 @@ Paste the script below. Set:
 ```powershell
 $base = '%BASE%'
 $settingsUrl = 'https://simuladorprecos.erse.pt/config/Settings.json'
-$stateFile = "$base\_state\last_update.txt"
-
-$stateFolder = Split-Path $stateFile -Parent
-if (-not (Test-Path $stateFolder)) { New-Item -ItemType Directory -Path $stateFolder | Out-Null }
-
-$lastKnown = ''
-if (Test-Path $stateFile) { $lastKnown = (Get-Content $stateFile -Raw).Trim() }
 
 try {
     $settings = Invoke-RestMethod -Uri $settingsUrl -UseBasicParsing
@@ -73,12 +76,6 @@ if (-not $currentCsvUrl) {
     exit
 }
 
-if ($currentCsvUrl -eq $lastKnown) {
-    [Console]::Write("NO_UPDATE: $currentCsvUrl")
-    exit
-}
-
-# Parse timestamp from URL: .../20260413 173154 CSV.zip -> 2026-04-13_173154
 if ($currentCsvUrl -notmatch '/(\d{8}) (\d{6}) CSV\.zip$') {
     [Console]::Write("ERROR: could not parse timestamp from csvPath: $currentCsvUrl")
     exit
@@ -87,43 +84,82 @@ $datePart = $matches[1]
 $timePart = $matches[2]
 $timestamp = "{0}-{1}-{2}_{3}" -f $datePart.Substring(0,4), $datePart.Substring(4,2), $datePart.Substring(6,2), $timePart
 
-$tmpDir = "$base\_tmp"
-if (Test-Path $tmpDir) { Remove-Item $tmpDir -Recurse -Force }
-New-Item -ItemType Directory -Path $tmpDir | Out-Null
+$condHist   = "$base\Histórico\Condições Comerciais\$timestamp"
+$precosHist = "$base\Histórico\Preços\$timestamp"
 
-$encodedUrl = [System.Uri]::EscapeUriString($currentCsvUrl)
-Invoke-WebRequest -Uri $encodedUrl -OutFile "$tmpDir\erse.zip" -UseBasicParsing
+$status = ''
 
-Expand-Archive -Path "$tmpDir\erse.zip" -DestinationPath $tmpDir -Force
+if ((Test-Path "$condHist\CondComerciais.csv") -and (Test-Path "$precosHist\Precos_ELEGN.csv")) {
+    $status = "NO_UPDATE: $timestamp already in Historico"
+} else {
+    $tmpDir = "$base\_tmp"
+    if (Test-Path $tmpDir) { Remove-Item $tmpDir -Recurse -Force }
+    New-Item -ItemType Directory -Path $tmpDir | Out-Null
 
-$condCsv = Get-ChildItem -Path $tmpDir -Recurse -Filter 'CondComerciais.csv' | Select-Object -First 1
-$precosCsv = Get-ChildItem -Path $tmpDir -Recurse -Filter 'Precos_ELEGN.csv' | Select-Object -First 1
+    $encodedUrl = [System.Uri]::EscapeUriString($currentCsvUrl)
+    Invoke-WebRequest -Uri $encodedUrl -OutFile "$tmpDir\erse.zip" -UseBasicParsing
 
-if (-not $condCsv -or -not $precosCsv) {
-    [Console]::Write("ERROR: expected CSVs not found in ZIP")
-    exit
+    Expand-Archive -Path "$tmpDir\erse.zip" -DestinationPath $tmpDir -Force
+
+    $condCsv = Get-ChildItem -Path $tmpDir -Recurse -Filter 'CondComerciais.csv' | Select-Object -First 1
+    $precosCsv = Get-ChildItem -Path $tmpDir -Recurse -Filter 'Precos_ELEGN.csv' | Select-Object -First 1
+
+    if (-not $condCsv -or -not $precosCsv) {
+        [Console]::Write("ERROR: expected CSVs not found in ZIP")
+        exit
+    }
+
+    New-Item -ItemType Directory -Path $condHist -Force | Out-Null
+    New-Item -ItemType Directory -Path $precosHist -Force | Out-Null
+    Copy-Item $condCsv.FullName   "$condHist\CondComerciais.csv"   -Force
+    Copy-Item $precosCsv.FullName "$precosHist\Precos_ELEGN.csv"   -Force
+
+    Remove-Item $tmpDir -Recurse -Force
+
+    $status = "UPDATED: $timestamp"
 }
 
-$condHist    = "$base\Histórico\Condições Comerciais\$timestamp"
-$precosHist  = "$base\Histórico\Preços\$timestamp"
-$condAtual   = "$base\Atual\Condições Comerciais"
-$precosAtual = "$base\Atual\Preços"
+# === Rebuild Compiled folder ===
+$compiledDir = "$base\Compiled"
+New-Item -ItemType Directory -Path $compiledDir -Force | Out-Null
 
-New-Item -ItemType Directory -Path $condHist   -Force | Out-Null
-New-Item -ItemType Directory -Path $precosHist -Force | Out-Null
-New-Item -ItemType Directory -Path $condAtual  -Force | Out-Null
-New-Item -ItemType Directory -Path $precosAtual -Force | Out-Null
+$enc = [System.Text.Encoding]::GetEncoding(1252)
 
-Copy-Item $condCsv.FullName   "$condHist\CondComerciais.csv"   -Force
-Copy-Item $precosCsv.FullName "$precosHist\Precos_ELEGN.csv"   -Force
-Copy-Item $condCsv.FullName   "$condAtual\CondComerciais.csv"  -Force
-Copy-Item $precosCsv.FullName "$precosAtual\Precos_ELEGN.csv" -Force
+function Compile-Snapshots {
+    param($sourceFolder, $outputFile, $filename, $encoding)
 
-Remove-Item $tmpDir -Recurse -Force
+    $folders = Get-ChildItem -Path $sourceFolder -Directory -ErrorAction SilentlyContinue | Sort-Object Name
+    $allLines = New-Object System.Collections.ArrayList
+    $headerWritten = $false
 
-Set-Content -Path $stateFile -Value $currentCsvUrl -NoNewline
+    foreach ($folder in $folders) {
+        $csvPath = Join-Path $folder.FullName $filename
+        if (-not (Test-Path $csvPath)) { continue }
 
-[Console]::Write("UPDATED: $timestamp")
+        $ts = $folder.Name
+        if ($ts -notmatch '^(\d{4})-(\d{2})-(\d{2})_(\d{2})(\d{2})(\d{2})$') { continue }
+        $snapshotDate = "{0}-{1}-{2} {3}:{4}:{5}" -f $matches[1], $matches[2], $matches[3], $matches[4], $matches[5], $matches[6]
+
+        $lines = [System.IO.File]::ReadAllLines($csvPath, $encoding)
+        if ($lines.Length -eq 0) { continue }
+
+        if (-not $headerWritten) {
+            [void]$allLines.Add("$($lines[0]);SnapshotDate")
+            $headerWritten = $true
+        }
+
+        for ($i = 1; $i -lt $lines.Length; $i++) {
+            [void]$allLines.Add("$($lines[$i]);$snapshotDate")
+        }
+    }
+
+    [System.IO.File]::WriteAllLines($outputFile, $allLines, $encoding)
+}
+
+Compile-Snapshots -sourceFolder "$base\Histórico\Condições Comerciais" -outputFile "$compiledDir\CondComerciais_compiled.csv" -filename 'CondComerciais.csv' -encoding $enc
+Compile-Snapshots -sourceFolder "$base\Histórico\Preços"               -outputFile "$compiledDir\Precos_ELEGN_compiled.csv"   -filename 'Precos_ELEGN.csv' -encoding $enc
+
+[Console]::Write("$status; Compiled rebuilt")
 ```
 
 ### Action 3: Apresentar mensagem
@@ -135,9 +171,28 @@ Set-Content -Path $stateFile -Value $currentCsvUrl -NoNewline
 
 | Output | Meaning |
 |---|---|
-| `UPDATED: <url>` | New version downloaded and copied to Atual\ |
-| `NO_UPDATE: <url>` | csvPath unchanged since the last run |
-| `ERROR: ...` | Something broke; check `PsErrors` |
+| `UPDATED: 2026-04-13_173154; Compiled rebuilt` | New ZIP downloaded, archived under that timestamp, compiled files refreshed |
+| `NO_UPDATE: 2026-04-13_173154 already in Historico; Compiled rebuilt` | Current ERSE timestamp already exists locally — skipped download but still rebuilt Compiled |
+| `ERROR: ...` | Something broke; check `PsErrors` for details |
+
+## What the Compiled CSVs look like
+
+Each line is a row from one of the snapshots, with `SnapshotDate` appended as the last column (semicolon-delimited, Windows-1252 encoding to match ERSE's source files).
+
+```
+COM;CDD_Proposta;NomeProposta;...;SnapshotDate
+TUR;TUR;Condições de preço regulado;...;2024-12-13 18:22:11
+TUR;TUR;Condições de preço regulado;...;2025-02-21 17:19:22
+...
+```
+
+Power BI only needs to load these two files. The `SnapshotDate` column is the time-series axis.
+
+## Test plan
+
+1. **Backfill first** (one-off, see `erse-historical-backfill.md`) so `Histórico\` is populated.
+2. **First run of this flow**: should download today's ZIP if its timestamp is newer than anything in `Histórico\`. Output: `UPDATED: ...`
+3. **Second run, immediately**: should see the timestamp already exists and skip the download. Output: `NO_UPDATE: ... already in Historico`. The compiled files are still refreshed (no-op effectively, same content).
 
 ## Scheduling
 
@@ -149,7 +204,3 @@ Use Windows Task Scheduler to run daily:
    - Program: `"C:\Program Files (x86)\Power Automate Desktop\PAD.Console.Host.exe"`
    - Arguments: `"ms-powerautomate:/console/flow/run?workflowName=ERSE_Competitive_Update"`
 4. Settings → tick "Run task as soon as possible after a scheduled start is missed"
-
-## History note
-
-Earlier iterations of this design tried to scrape the homepage HTML to find the "Atualizado em" date, but the homepage is JavaScript-rendered and the link is populated client-side from `Settings.json`. Using the JSON endpoint directly is faster, more reliable, and gives us the exact ZIP filename including the second-precision timestamp.
