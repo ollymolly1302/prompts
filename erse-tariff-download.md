@@ -87,8 +87,8 @@ $tmpDir = "$base\_tmp"
 if (Test-Path $tmpDir) { Remove-Item $tmpDir -Recurse -Force }
 New-Item -ItemType Directory -Path $tmpDir | Out-Null
 
-# URL contains spaces - encode them
-$encodedUrl = $currentCsvUrl.Replace(' ', '%20')
+# URL contains spaces - encode them via .NET (avoids any literal % in source)
+$encodedUrl = [System.Uri]::EscapeUriString($currentCsvUrl)
 Invoke-WebRequest -Uri $encodedUrl -OutFile "$tmpDir\erse.zip" -UseBasicParsing
 
 # Extract
