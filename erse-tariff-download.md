@@ -6,7 +6,7 @@ Power Automate Desktop flow that polls the Portuguese regulator's tariff simulat
 
 - ERSE updates on demand (whenever a competitor changes a price or launches an offer), not on a fixed schedule. Polling daily is the right cadence.
 - The check uses the **archive folder itself** as the source of truth: if the parsed timestamp from ERSE's `csvPath` already corresponds to a folder under `Histórico\`, no download. No `_state` file needed.
-- A `Main\` folder is rebuilt on every successful run: it concatenates every snapshot in `Histórico\` and adds a `SnapshotDate` column derived from each source folder name. Power BI only needs to load these two files.
+- A `Main\ERSE_main.csv` is rebuilt on every successful run: every Precos row from every snapshot is left-joined to its CondComerciais row on `COD_Proposta` (column E in Precos / column B in CondComerciais), giving each price row the offer's name, duration, and validity dates. A `SnapshotDate` column derived from the folder name closes the loop. Power BI only needs to load this single file.
 
 ## Folder layout
 
@@ -23,8 +23,7 @@ ERSE\
 │       ├── 2024-12-13_182211\Precos_ELEGN.csv
 │       └── ...
 ├── Main\
-│   ├── CondComerciais_main.csv   ← all snapshots merged + SnapshotDate column
-│   └── Precos_ELEGN_main.csv     ← same
+│   └── ERSE_main.csv   ← all snapshots, Precos left-joined to CondComerciais on COD_Proposta + SnapshotDate
 └── _tmp\                              ← created/deleted automatically per run
 ```
 
@@ -119,62 +118,80 @@ if ((Test-Path "$condHist\CondComerciais.csv") -and (Test-Path "$precosHist\Prec
     $status = "UPDATED: $timestamp"
 }
 
-# === Rebuild Main folder ===
+# === Rebuild Main folder (single merged file) ===
 $mainDir = "$base\Main"
+
+# Wipe old Main contents so legacy files don't linger
+if (Test-Path $mainDir) { Get-ChildItem $mainDir -File -ErrorAction SilentlyContinue | Remove-Item -Force }
 New-Item -ItemType Directory -Path $mainDir -Force | Out-Null
 
 $enc = [System.Text.Encoding]::GetEncoding(1252)
 
-function Compile-Snapshots {
-    param($sourceFolder, $outputFile, $filename, $encoding, [int[]]$keepIdx, [int[]]$dropIdx)
+function Compile-Merged {
+    param($condFolder, $precosFolder, $outputFile, $encoding)
 
-    $folders = Get-ChildItem -Path $sourceFolder -Directory -ErrorAction SilentlyContinue | Sort-Object Name
+    # Use Precos folder as source of truth for which snapshots to include
+    $folders = Get-ChildItem -Path $precosFolder -Directory -ErrorAction SilentlyContinue | Sort-Object Name
+
     $allLines = New-Object System.Collections.ArrayList
     $headerWritten = $false
 
     foreach ($folder in $folders) {
-        $csvPath = Join-Path $folder.FullName $filename
-        if (-not (Test-Path $csvPath)) { continue }
-
         $ts = $folder.Name
         if ($ts -notmatch '^(\d{4})-(\d{2})-(\d{2})_(\d{2})(\d{2})(\d{2})$') { continue }
         $snapshotDate = "{0}-{1}-{2} {3}:{4}:{5}" -f $matches[1], $matches[2], $matches[3], $matches[4], $matches[5], $matches[6]
 
-        $lines = [System.IO.File]::ReadAllLines($csvPath, $encoding)
-        if ($lines.Length -eq 0) { continue }
+        $precosPath = Join-Path $folder.FullName 'Precos_ELEGN.csv'
+        $condPath   = Join-Path (Join-Path $condFolder $ts) 'CondComerciais.csv'
 
-        for ($i = 0; $i -lt $lines.Length; $i++) {
-            $cells = $lines[$i] -split ';'
+        if (-not (Test-Path $precosPath)) { continue }
+        if (-not (Test-Path $condPath))   { continue }
 
-            if ($keepIdx) {
-                $cells = @($keepIdx | ForEach-Object { if ($_ -lt $cells.Length) { $cells[$_] } else { '' } })
-            } elseif ($dropIdx) {
-                $kept = New-Object System.Collections.ArrayList
-                for ($j = 0; $j -lt $cells.Length; $j++) {
-                    if ($dropIdx -notcontains $j) { [void]$kept.Add($cells[$j]) }
-                }
-                $cells = $kept.ToArray()
+        # Build COD_Proposta -> Cond fields (NomeProposta, DuracaoContrato, DataIni, DataFim)
+        $condLines = [System.IO.File]::ReadAllLines($condPath, $encoding)
+        $condIdx = @{}
+        for ($i = 1; $i -lt $condLines.Length; $i++) {
+            $c = $condLines[$i] -split ';'
+            if ($c.Length -lt 14) { continue }
+            $key = $c[1]
+            $condIdx[$key] = "$($c[2]);$($c[11]);$($c[12]);$($c[13])"
+        }
+
+        $precosLines = [System.IO.File]::ReadAllLines($precosPath, $encoding)
+        if ($precosLines.Length -eq 0) { continue }
+
+        # Header — once across all snapshots
+        if (-not $headerWritten) {
+            $ph = $precosLines[0] -split ';'
+            $kept = New-Object System.Collections.ArrayList
+            for ($j = 0; $j -lt $ph.Length; $j++) {
+                if ($j -ne 3 -and $j -ne 5) { [void]$kept.Add($ph[$j]) }
+            }
+            $ch = $condLines[0] -split ';'
+            $condHeader = "$($ch[2]);$($ch[11]);$($ch[12]);$($ch[13])"
+            [void]$allLines.Add(($kept -join ';') + ";$condHeader;SnapshotDate")
+            $headerWritten = $true
+        }
+
+        # Each Precos row -> drop ORD (3) + Contagem (5), join Cond on COD_Proposta (col E = idx 4)
+        for ($i = 1; $i -lt $precosLines.Length; $i++) {
+            $cells = $precosLines[$i] -split ';'
+            $codKey = if ($cells.Length -gt 4) { $cells[4] } else { '' }
+            $condData = if ($condIdx.ContainsKey($codKey)) { $condIdx[$codKey] } else { ';;;' }
+
+            $kept = New-Object System.Collections.ArrayList
+            for ($j = 0; $j -lt $cells.Length; $j++) {
+                if ($j -ne 3 -and $j -ne 5) { [void]$kept.Add($cells[$j]) }
             }
 
-            if ($i -eq 0) {
-                if (-not $headerWritten) {
-                    [void]$allLines.Add(($cells -join ';') + ';SnapshotDate')
-                    $headerWritten = $true
-                }
-            } else {
-                [void]$allLines.Add(($cells -join ';') + ";$snapshotDate")
-            }
+            [void]$allLines.Add(($kept -join ';') + ";$condData;$snapshotDate")
         }
     }
 
     [System.IO.File]::WriteAllLines($outputFile, $allLines, $encoding)
 }
 
-# CondComerciais: keep only COM (A), CDD_Proposta (B), NomeProposta (C), DuracaoContrato (L), DataIni (M), DataFim (N)
-Compile-Snapshots -sourceFolder "$base\Histórico\Condições Comerciais" -outputFile "$mainDir\CondComerciais_main.csv" -filename 'CondComerciais.csv' -encoding $enc -keepIdx @(0, 1, 2, 11, 12, 13)
-
-# Precos_ELEGN: drop ORD (D) and Contagem (F); keep all others
-Compile-Snapshots -sourceFolder "$base\Histórico\Preços"               -outputFile "$mainDir\Precos_ELEGN_main.csv"   -filename 'Precos_ELEGN.csv' -encoding $enc -dropIdx @(3, 5)
+Compile-Merged -condFolder "$base\Histórico\Condições Comerciais" -precosFolder "$base\Histórico\Preços" -outputFile "$mainDir\ERSE_main.csv" -encoding $enc
 
 [Console]::Write("$status; Main rebuilt")
 ```
@@ -192,34 +209,28 @@ Compile-Snapshots -sourceFolder "$base\Histórico\Preços"               -output
 | `NO_UPDATE: 2026-04-13_173154 already in Historico; Main rebuilt` | Current ERSE timestamp already exists locally — skipped download but still rebuilt Main |
 | `ERROR: ...` | Something broke; check `PsErrors` for details |
 
-## What the Main CSVs look like
+## What `ERSE_main.csv` looks like
 
-Each line is a row from one of the snapshots, with `SnapshotDate` appended as the last column (semicolon-delimited, Windows-1252 encoding to match ERSE's source files).
-
-**`CondComerciais_main.csv`** — only the relevant offer-metadata columns:
+Single file. Each row is one Precos row enriched with the matching CondComerciais fields and tagged with the snapshot date. Semicolon-delimited, Windows-1252 encoding.
 
 ```
-COM;CDD_Proposta;NomeProposta;DuracaoContrato;DataIni;DataFim;SnapshotDate
-TUR;TUR;Condições de preço regulado;12;01/03/2025;31/12/2099;2024-12-13 18:22:11
-ALFAENERGIA;ALFAENERGIA_03;Tarifa ALFA GAS FIXO BASE;12;02/04/2025;...;2024-12-13 18:22:11
+COM;Pot_Cont;Escalao;COD_Proposta;TF;TV;TVFV;TVI;TVx;TFGN;TVGN;...;NomeProposta;DuracaoContrato;DataIni;DataFim;SnapshotDate
+CURBEI;1;BEI;CURBEI;0,0897;0,0641;...;Cooperativa BASE 2.0;12;01/03/2025;31/12/2099;2024-12-13 18:22:11
 ...
 ```
 
-**`Precos_ELEGN_main.csv`** — all price columns, `ORD` and `Contagem` filtered out:
+Columns:
+- From Precos (after dropping `ORD` and `Contagem`): COM, Pot_Cont, Escalao, COD_Proposta, plus all price columns from TF onwards
+- Joined from CondComerciais on COD_Proposta: NomeProposta, DuracaoContrato, DataIni, DataFim
+- Added by the script: SnapshotDate
 
-```
-COM;Pot_Cont;Escalao;CDD_Proposta;TF;TV;TVFV;TVI;TVx;TFGN;TVGN;...;SnapshotDate
-CURBEI;1;BEI;CURBEI;0,0897;0,0641;...;2024-12-13 18:22:11
-...
-```
-
-Power BI only needs to load these two files. The `SnapshotDate` column is the time-series axis.
+The join is a left join with Precos as the left side: every price row is preserved; if a Precos row has no matching offer in CondComerciais (rare/never), the four joined fields are empty.
 
 ## Test plan
 
 1. **Backfill first** (one-off, see `erse-historical-backfill.md`) so `Histórico\` is populated.
 2. **First run of this flow**: should download today's ZIP if its timestamp is newer than anything in `Histórico\`. Output: `UPDATED: ...`
-3. **Second run, immediately**: should see the timestamp already exists and skip the download. Output: `NO_UPDATE: ... already in Historico`. The Main files are still refreshed (no-op effectively, same content).
+3. **Second run, immediately**: should see the timestamp already exists and skip the download. Output: `NO_UPDATE: ... already in Historico`. `ERSE_main.csv` is still refreshed (no-op effectively, same content).
 
 ## Scheduling
 
