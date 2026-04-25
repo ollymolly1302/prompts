@@ -1,12 +1,12 @@
 # ERSE Tariff Auto-Download (Power Automate Desktop + PowerShell)
 
-Power Automate Desktop flow that polls the Portuguese regulator's tariff simulator (https://simuladorprecos.erse.pt) once a day, downloads the current commercial-offers ZIP only if its timestamp is not yet in the local archive, and rebuilds two compiled CSVs that contain every historical snapshot with a `SnapshotDate` column for direct ingestion into Power BI.
+Power Automate Desktop flow that polls the Portuguese regulator's tariff simulator (https://simuladorprecos.erse.pt) once a day, downloads the current commercial-offers ZIP only if its timestamp is not yet in the local archive, and rebuilds two consolidated CSVs (under `Main\`) that contain every historical snapshot with a `SnapshotDate` column for direct ingestion into Power BI.
 
 ## Why this design
 
 - ERSE updates on demand (whenever a competitor changes a price or launches an offer), not on a fixed schedule. Polling daily is the right cadence.
 - The check uses the **archive folder itself** as the source of truth: if the parsed timestamp from ERSE's `csvPath` already corresponds to a folder under `Histórico\`, no download. No `_state` file needed.
-- A `Compiled\` folder is rebuilt on every successful run: it concatenates every snapshot in `Histórico\` and adds a `SnapshotDate` column derived from each source folder name. Power BI only needs to load these two compiled files.
+- A `Main\` folder is rebuilt on every successful run: it concatenates every snapshot in `Histórico\` and adds a `SnapshotDate` column derived from each source folder name. Power BI only needs to load these two files.
 
 ## Folder layout
 
@@ -22,9 +22,9 @@ ERSE\
 │   └── Preços\
 │       ├── 2024-12-13_182211\Precos_ELEGN.csv
 │       └── ...
-├── Compiled\
-│   ├── CondComerciais_compiled.csv   ← all snapshots merged + SnapshotDate column
-│   └── Precos_ELEGN_compiled.csv     ← same
+├── Main\
+│   ├── CondComerciais_main.csv   ← all snapshots merged + SnapshotDate column
+│   └── Precos_ELEGN_main.csv     ← same
 └── _tmp\                              ← created/deleted automatically per run
 ```
 
@@ -45,7 +45,7 @@ The script:
 1. Fetches `Settings.json`
 2. Parses the timestamp from `csvPath`
 3. Checks whether `Histórico\Condições Comerciais\<YYYY-MM-DD_HHMMSS>\CondComerciais.csv` already exists
-4. If yes → no download, just rebuild Compiled. If no → download, save under that timestamp, then rebuild Compiled.
+4. If yes → no download, just rebuild Main. If no → download, save under that timestamp, then rebuild Main.
 
 ## Power Automate Desktop flow — 3 actions
 
@@ -119,9 +119,9 @@ if ((Test-Path "$condHist\CondComerciais.csv") -and (Test-Path "$precosHist\Prec
     $status = "UPDATED: $timestamp"
 }
 
-# === Rebuild Compiled folder ===
-$compiledDir = "$base\Compiled"
-New-Item -ItemType Directory -Path $compiledDir -Force | Out-Null
+# === Rebuild Main folder ===
+$mainDir = "$base\Main"
+New-Item -ItemType Directory -Path $mainDir -Force | Out-Null
 
 $enc = [System.Text.Encoding]::GetEncoding(1252)
 
@@ -156,10 +156,10 @@ function Compile-Snapshots {
     [System.IO.File]::WriteAllLines($outputFile, $allLines, $encoding)
 }
 
-Compile-Snapshots -sourceFolder "$base\Histórico\Condições Comerciais" -outputFile "$compiledDir\CondComerciais_compiled.csv" -filename 'CondComerciais.csv' -encoding $enc
-Compile-Snapshots -sourceFolder "$base\Histórico\Preços"               -outputFile "$compiledDir\Precos_ELEGN_compiled.csv"   -filename 'Precos_ELEGN.csv' -encoding $enc
+Compile-Snapshots -sourceFolder "$base\Histórico\Condições Comerciais" -outputFile "$mainDir\CondComerciais_main.csv" -filename 'CondComerciais.csv' -encoding $enc
+Compile-Snapshots -sourceFolder "$base\Histórico\Preços"               -outputFile "$mainDir\Precos_ELEGN_main.csv"   -filename 'Precos_ELEGN.csv' -encoding $enc
 
-[Console]::Write("$status; Compiled rebuilt")
+[Console]::Write("$status; Main rebuilt")
 ```
 
 ### Action 3: Apresentar mensagem
@@ -171,11 +171,11 @@ Compile-Snapshots -sourceFolder "$base\Histórico\Preços"               -output
 
 | Output | Meaning |
 |---|---|
-| `UPDATED: 2026-04-13_173154; Compiled rebuilt` | New ZIP downloaded, archived under that timestamp, compiled files refreshed |
-| `NO_UPDATE: 2026-04-13_173154 already in Historico; Compiled rebuilt` | Current ERSE timestamp already exists locally — skipped download but still rebuilt Compiled |
+| `UPDATED: 2026-04-13_173154; Main rebuilt` | New ZIP downloaded, archived under that timestamp, Main files refreshed |
+| `NO_UPDATE: 2026-04-13_173154 already in Historico; Main rebuilt` | Current ERSE timestamp already exists locally — skipped download but still rebuilt Main |
 | `ERROR: ...` | Something broke; check `PsErrors` for details |
 
-## What the Compiled CSVs look like
+## What the Main CSVs look like
 
 Each line is a row from one of the snapshots, with `SnapshotDate` appended as the last column (semicolon-delimited, Windows-1252 encoding to match ERSE's source files).
 
@@ -192,7 +192,7 @@ Power BI only needs to load these two files. The `SnapshotDate` column is the ti
 
 1. **Backfill first** (one-off, see `erse-historical-backfill.md`) so `Histórico\` is populated.
 2. **First run of this flow**: should download today's ZIP if its timestamp is newer than anything in `Histórico\`. Output: `UPDATED: ...`
-3. **Second run, immediately**: should see the timestamp already exists and skip the download. Output: `NO_UPDATE: ... already in Historico`. The compiled files are still refreshed (no-op effectively, same content).
+3. **Second run, immediately**: should see the timestamp already exists and skip the download. Output: `NO_UPDATE: ... already in Historico`. The Main files are still refreshed (no-op effectively, same content).
 
 ## Scheduling
 
