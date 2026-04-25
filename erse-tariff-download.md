@@ -126,7 +126,7 @@ New-Item -ItemType Directory -Path $mainDir -Force | Out-Null
 $enc = [System.Text.Encoding]::GetEncoding(1252)
 
 function Compile-Snapshots {
-    param($sourceFolder, $outputFile, $filename, $encoding)
+    param($sourceFolder, $outputFile, $filename, $encoding, [int[]]$keepIdx, [int[]]$dropIdx)
 
     $folders = Get-ChildItem -Path $sourceFolder -Directory -ErrorAction SilentlyContinue | Sort-Object Name
     $allLines = New-Object System.Collections.ArrayList
@@ -143,21 +143,38 @@ function Compile-Snapshots {
         $lines = [System.IO.File]::ReadAllLines($csvPath, $encoding)
         if ($lines.Length -eq 0) { continue }
 
-        if (-not $headerWritten) {
-            [void]$allLines.Add("$($lines[0]);SnapshotDate")
-            $headerWritten = $true
-        }
+        for ($i = 0; $i -lt $lines.Length; $i++) {
+            $cells = $lines[$i] -split ';'
 
-        for ($i = 1; $i -lt $lines.Length; $i++) {
-            [void]$allLines.Add("$($lines[$i]);$snapshotDate")
+            if ($keepIdx) {
+                $cells = @($keepIdx | ForEach-Object { if ($_ -lt $cells.Length) { $cells[$_] } else { '' } })
+            } elseif ($dropIdx) {
+                $kept = New-Object System.Collections.ArrayList
+                for ($j = 0; $j -lt $cells.Length; $j++) {
+                    if ($dropIdx -notcontains $j) { [void]$kept.Add($cells[$j]) }
+                }
+                $cells = $kept.ToArray()
+            }
+
+            if ($i -eq 0) {
+                if (-not $headerWritten) {
+                    [void]$allLines.Add(($cells -join ';') + ';SnapshotDate')
+                    $headerWritten = $true
+                }
+            } else {
+                [void]$allLines.Add(($cells -join ';') + ";$snapshotDate")
+            }
         }
     }
 
     [System.IO.File]::WriteAllLines($outputFile, $allLines, $encoding)
 }
 
-Compile-Snapshots -sourceFolder "$base\Histórico\Condições Comerciais" -outputFile "$mainDir\CondComerciais_main.csv" -filename 'CondComerciais.csv' -encoding $enc
-Compile-Snapshots -sourceFolder "$base\Histórico\Preços"               -outputFile "$mainDir\Precos_ELEGN_main.csv"   -filename 'Precos_ELEGN.csv' -encoding $enc
+# CondComerciais: keep only COM (A), CDD_Proposta (B), NomeProposta (C), DuracaoContrato (L), DataIni (M), DataFim (N)
+Compile-Snapshots -sourceFolder "$base\Histórico\Condições Comerciais" -outputFile "$mainDir\CondComerciais_main.csv" -filename 'CondComerciais.csv' -encoding $enc -keepIdx @(0, 1, 2, 11, 12, 13)
+
+# Precos_ELEGN: drop ORD (D) and Contagem (F); keep all others
+Compile-Snapshots -sourceFolder "$base\Histórico\Preços"               -outputFile "$mainDir\Precos_ELEGN_main.csv"   -filename 'Precos_ELEGN.csv' -encoding $enc -dropIdx @(3, 5)
 
 [Console]::Write("$status; Main rebuilt")
 ```
@@ -179,10 +196,20 @@ Compile-Snapshots -sourceFolder "$base\Histórico\Preços"               -output
 
 Each line is a row from one of the snapshots, with `SnapshotDate` appended as the last column (semicolon-delimited, Windows-1252 encoding to match ERSE's source files).
 
+**`CondComerciais_main.csv`** — only the relevant offer-metadata columns:
+
 ```
-COM;CDD_Proposta;NomeProposta;...;SnapshotDate
-TUR;TUR;Condições de preço regulado;...;2024-12-13 18:22:11
-TUR;TUR;Condições de preço regulado;...;2025-02-21 17:19:22
+COM;CDD_Proposta;NomeProposta;DuracaoContrato;DataIni;DataFim;SnapshotDate
+TUR;TUR;Condições de preço regulado;12;01/03/2025;31/12/2099;2024-12-13 18:22:11
+ALFAENERGIA;ALFAENERGIA_03;Tarifa ALFA GAS FIXO BASE;12;02/04/2025;...;2024-12-13 18:22:11
+...
+```
+
+**`Precos_ELEGN_main.csv`** — all price columns, `ORD` and `Contagem` filtered out:
+
+```
+COM;Pot_Cont;Escalao;CDD_Proposta;TF;TV;TVFV;TVI;TVx;TFGN;TVGN;...;SnapshotDate
+CURBEI;1;BEI;CURBEI;0,0897;0,0641;...;2024-12-13 18:22:11
 ...
 ```
 
