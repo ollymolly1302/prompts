@@ -411,21 +411,31 @@ The PowerShell step writes an HTML report to `_state\email_body.html` whenever t
 
 **Inside the If block**:
 
-**4b — Ler texto do ficheiro**
+**4b — Iniciar o Outlook**
+- Categoria: **Outlook → Iniciar o Outlook**
+- Sem parâmetros para preencher.
+- Variável produzida: `OutlookInstance` (ou nome semelhante — o PAD gera por defeito).
+
+**4c — Ler texto do ficheiro**
 - Categoria: **Ficheiro → Ler texto do ficheiro**
 - Caminho: `%BASE%\_state\email_body.html`
 - Armazenar como: `Texto individual`
 - Codificação: `UTF-8`
 - Guardar em: `EmailHtml`
 
-**4c — Enviar mensagem de e-mail (Outlook)**
+**4d — Enviar mensagem de e-mail através do Outlook**
 - Categoria: **Outlook → Enviar mensagem de e-mail através do Outlook**
+- **Instância do Outlook**: `%OutlookInstance%` (a variável produzida pelo passo 4b)
 - Conta: a tua conta Outlook (default)
 - Para: o teu email (ex: `nome@empresa.com`); separa múltiplos por `;`
 - Assunto: `ERSE — alterações detectadas (%Result%)`
 - Corpo: `%EmailHtml%`
 - O corpo é HTML: ✅ ligado
 - Anexos: nenhum
+
+**4e — Fechar o Outlook** (opcional, mas boas práticas)
+- Categoria: **Outlook → Fechar o Outlook**
+- Instância do Outlook: `%OutlookInstance%`
 
 **End if**
 
