@@ -67,9 +67,11 @@ Format: `dd/mm/yyyy hh:mm:ss`
 
 ```
 Previous Snapshot =
+VAR LatestDate = [Latest Snapshot]
+RETURN
 CALCULATE(
     MAX('ERSE_main'[SnapshotDate]),
-    'ERSE_main'[SnapshotDate] < [Latest Snapshot]
+    'ERSE_main'[SnapshotDate] < LatestDate
 )
 ```
 Format: `dd/mm/yyyy hh:mm:ss`
@@ -93,18 +95,22 @@ Format: `#,0`
 
 ```
 # Active Competitors =
+VAR LatestDate = [Latest Snapshot]
+RETURN
 CALCULATE(
     DISTINCTCOUNT('ERSE_main'[COM]),
-    'ERSE_main'[SnapshotDate] = [Latest Snapshot]
+    'ERSE_main'[SnapshotDate] = LatestDate
 )
 ```
 Format: `#,0`
 
 ```
 # Active Offers =
+VAR LatestDate = [Latest Snapshot]
+RETURN
 CALCULATE(
     DISTINCTCOUNT('ERSE_main'[COD_Proposta]),
-    'ERSE_main'[SnapshotDate] = [Latest Snapshot]
+    'ERSE_main'[SnapshotDate] = LatestDate
 )
 ```
 Format: `#,0`
@@ -154,27 +160,33 @@ Format: `#,0`
 
 ```
 Avg TF Latest =
+VAR LatestDate = [Latest Snapshot]
+RETURN
 CALCULATE(
     AVERAGE('ERSE_main'[TF]),
-    'ERSE_main'[SnapshotDate] = [Latest Snapshot]
+    'ERSE_main'[SnapshotDate] = LatestDate
 )
 ```
 Format: `0.0000`
 
 ```
 Min TF Latest =
+VAR LatestDate = [Latest Snapshot]
+RETURN
 CALCULATE(
     MIN('ERSE_main'[TF]),
-    'ERSE_main'[SnapshotDate] = [Latest Snapshot]
+    'ERSE_main'[SnapshotDate] = LatestDate
 )
 ```
 Format: `0.0000`
 
 ```
 Max TF Latest =
+VAR LatestDate = [Latest Snapshot]
+RETURN
 CALCULATE(
     MAX('ERSE_main'[TF]),
-    'ERSE_main'[SnapshotDate] = [Latest Snapshot]
+    'ERSE_main'[SnapshotDate] = LatestDate
 )
 ```
 Format: `0.0000`
@@ -186,27 +198,33 @@ Format: `0.0000`
 
 ```
 Avg TV Latest =
+VAR LatestDate = [Latest Snapshot]
+RETURN
 CALCULATE(
     AVERAGE('ERSE_main'[TV]),
-    'ERSE_main'[SnapshotDate] = [Latest Snapshot]
+    'ERSE_main'[SnapshotDate] = LatestDate
 )
 ```
 Format: `0.0000`
 
 ```
 Min TV Latest =
+VAR LatestDate = [Latest Snapshot]
+RETURN
 CALCULATE(
     MIN('ERSE_main'[TV]),
-    'ERSE_main'[SnapshotDate] = [Latest Snapshot]
+    'ERSE_main'[SnapshotDate] = LatestDate
 )
 ```
 Format: `0.0000`
 
 ```
 Max TV Latest =
+VAR LatestDate = [Latest Snapshot]
+RETURN
 CALCULATE(
     MAX('ERSE_main'[TV]),
-    'ERSE_main'[SnapshotDate] = [Latest Snapshot]
+    'ERSE_main'[SnapshotDate] = LatestDate
 )
 ```
 Format: `0.0000`
@@ -220,9 +238,11 @@ Format: `0.0000`
 
 ```
 Avg TF Previous =
+VAR PrevDate = [Previous Snapshot]
+RETURN
 CALCULATE(
     AVERAGE('ERSE_main'[TF]),
-    'ERSE_main'[SnapshotDate] = [Previous Snapshot]
+    'ERSE_main'[SnapshotDate] = PrevDate
 )
 ```
 Format: `0.0000`
@@ -239,9 +259,11 @@ Format: `+0.00%;-0.00%;0.00%`
 
 ```
 Avg TV Previous =
+VAR PrevDate = [Previous Snapshot]
+RETURN
 CALCULATE(
     AVERAGE('ERSE_main'[TV]),
-    'ERSE_main'[SnapshotDate] = [Previous Snapshot]
+    'ERSE_main'[SnapshotDate] = PrevDate
 )
 ```
 Format: `0.0000`
@@ -331,10 +353,12 @@ Format: `+0.0000;-0.0000;0.0000`
 
 ```
 Distance to Avg TF =
+VAR LatestDate = [Latest Snapshot]
+RETURN
 [Avg TF Latest] -
 CALCULATE(
     AVERAGE('ERSE_main'[TF]),
-    'ERSE_main'[SnapshotDate] = [Latest Snapshot],
+    'ERSE_main'[SnapshotDate] = LatestDate,
     ALL('ERSE_main'[COM])
 )
 ```
@@ -356,18 +380,22 @@ Format: *(leave blank — string)*
 
 ```
 Avg Contract Duration =
+VAR LatestDate = [Latest Snapshot]
+RETURN
 CALCULATE(
     AVERAGE('ERSE_main'[DuracaoContrato]),
-    'ERSE_main'[SnapshotDate] = [Latest Snapshot]
+    'ERSE_main'[SnapshotDate] = LatestDate
 )
 ```
 Format: `0.0`
 
 ```
 # Long-term Offers (>=24m) =
+VAR LatestDate = [Latest Snapshot]
+RETURN
 CALCULATE(
     DISTINCTCOUNT('ERSE_main'[COD_Proposta]),
-    'ERSE_main'[SnapshotDate] = [Latest Snapshot],
+    'ERSE_main'[SnapshotDate] = LatestDate,
     'ERSE_main'[DuracaoContrato] >= 24
 )
 ```
@@ -375,9 +403,11 @@ Format: `#,0`
 
 ```
 # Short-term Offers (<12m) =
+VAR LatestDate = [Latest Snapshot]
+RETURN
 CALCULATE(
     DISTINCTCOUNT('ERSE_main'[COD_Proposta]),
-    'ERSE_main'[SnapshotDate] = [Latest Snapshot],
+    'ERSE_main'[SnapshotDate] = LatestDate,
     'ERSE_main'[DuracaoContrato] < 12
 )
 ```
@@ -474,6 +504,7 @@ ERSE_main should still be in the data pane below `_Measures`, holding the actual
 
 ## Common pitfalls
 
+- **Error: "function 'PLACEHOLDER' was used in a True/False expression..."** → DAX cannot reference a measure directly inside a Boolean filter of `CALCULATE`. The pattern `CALCULATE(..., column = [SomeMeasure])` fails. Always wrap with `VAR`-`RETURN`: assign the measure to a variable first, then compare to the variable. All measures in this doc already follow this pattern; if you write your own, remember the rule.
 - **`SnapshotDate` is text, not date** → all time arithmetic returns blank. Fix the column type in Power Query first.
 - **Decimal columns parse with `,` vs `.`** → if `Avg TF Latest` is suspiciously huge (millions instead of <1), the locale was misread. In Power Query, set the file's locale to "Portuguese (Portugal)" before changing type.
 - **`Rank by TF` shows blank** outside of a `COM` context — that's correct, by design (the `ISINSCOPE` guard). It only renders when slicing/grouping by COM.
