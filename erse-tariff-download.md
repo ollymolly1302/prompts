@@ -181,11 +181,13 @@ if ($status -like 'UPDATED:*') {
                 $oldLookup[$key] = $r
             }
 
-            # Detect price changes
+            # Detect price changes — filter to Pot_Cont 3,45 and 6,9 only; round to 2 decimals before comparing
+            $potFilter = @('3,45', '6,9')
             $changes = New-Object System.Collections.ArrayList
             for ($i = 1; $i -lt $newPrecos.Length; $i++) {
                 $r = $newPrecos[$i] -split ';'
                 if ($r.Length -lt 12) { continue }
+                if ($potFilter -notcontains $r[1]) { continue }
                 $cod = $r[4]
                 if ($newCods -contains $cod) { continue }
                 $key = "$cod|$($r[1])|$($r[2])|$($r[5])"
@@ -193,17 +195,28 @@ if ($status -like 'UPDATED:*') {
                 $oldRow = $oldLookup[$key]
                 for ($j = 0; $j -lt $priceColIdxs.Length; $j++) {
                     $colIdx = $priceColIdxs[$j]
-                    $oldV = if ($colIdx -lt $oldRow.Length) { $oldRow[$colIdx] } else { '' }
-                    $newV = if ($colIdx -lt $r.Length)      { $r[$colIdx] }      else { '' }
-                    if ($oldV -ne $newV -and -not ([string]::IsNullOrEmpty($oldV) -and [string]::IsNullOrEmpty($newV))) {
+                    $oldRaw = if ($colIdx -lt $oldRow.Length) { $oldRow[$colIdx] } else { '' }
+                    $newRaw = if ($colIdx -lt $r.Length)      { $r[$colIdx] }      else { '' }
+
+                    # Round both to 2 decimals before comparing (drops sub-0.01 noise)
+                    $oldRounded = ''
+                    $newRounded = ''
+                    $oldNum = $null
+                    $newNum = $null
+                    try { if (-not [string]::IsNullOrEmpty($oldRaw)) { $oldNum = [double]::Parse(($oldRaw -replace ',', '.'), [System.Globalization.CultureInfo]::InvariantCulture); $oldRounded = ([Math]::Round($oldNum, 2)).ToString('0.00', [System.Globalization.CultureInfo]::InvariantCulture).Replace('.', ',') } } catch {}
+                    try { if (-not [string]::IsNullOrEmpty($newRaw)) { $newNum = [double]::Parse(($newRaw -replace ',', '.'), [System.Globalization.CultureInfo]::InvariantCulture); $newRounded = ([Math]::Round($newNum, 2)).ToString('0.00', [System.Globalization.CultureInfo]::InvariantCulture).Replace('.', ',') } } catch {}
+
+                    if ($oldRounded -ne $newRounded -and -not ([string]::IsNullOrEmpty($oldRounded) -and [string]::IsNullOrEmpty($newRounded))) {
                         [void]$changes.Add([pscustomobject]@{
-                            Cod  = $cod
-                            Nome = if ($codNameNew.ContainsKey($cod)) { $codNameNew[$cod] } else { $cod }
-                            Pot  = $r[1]
-                            Cont = $r[5]
-                            Col  = $priceColNames[$j]
-                            Old  = $oldV
-                            New  = $newV
+                            Cod    = $cod
+                            Nome   = if ($codNameNew.ContainsKey($cod)) { $codNameNew[$cod] } else { $cod }
+                            Pot    = $r[1]
+                            Cont   = $r[5]
+                            Col    = $priceColNames[$j]
+                            Old    = $oldRounded
+                            New    = $newRounded
+                            OldNum = $oldNum
+                            NewNum = $newNum
                         })
                     }
                 }
@@ -225,7 +238,8 @@ if ($status -like 'UPDATED:*') {
             [void]$sbHtml.AppendLine("<div class='s'>")
             [void]$sbHtml.AppendLine("<b>Snapshot novo:</b> $timestamp<br>")
             [void]$sbHtml.AppendLine("<b>Snapshot anterior:</b> $($prevFolder.Name)<br>")
-            [void]$sbHtml.AppendLine("<b>Alteracoes de preco:</b> $($changes.Count)<br>")
+            [void]$sbHtml.AppendLine("<b>Filtro:</b> apenas Pot_Cont = 3,45 e 6,9 kVA, arredondamento a 2 casas decimais<br>")
+            [void]$sbHtml.AppendLine("<b>Alteracoes de preco (filtradas):</b> $($changes.Count)<br>")
             [void]$sbHtml.AppendLine("<b>Ofertas novas:</b> $($newCods.Count)<br>")
             [void]$sbHtml.AppendLine("<b>Ofertas descontinuadas:</b> $($discontCods.Count)")
             [void]$sbHtml.AppendLine("</div>")
