@@ -125,12 +125,23 @@ $mainDir = "$base\Main"
 if (Test-Path $mainDir) { Get-ChildItem $mainDir -File -ErrorAction SilentlyContinue | Remove-Item -Force }
 New-Item -ItemType Directory -Path $mainDir -Force | Out-Null
 
-$enc = [System.Text.Encoding]::GetEncoding(1252)
+# Source CSVs are UTF-8 with BOM. Read with UTF8 (handles BOM); write without BOM for Power BI.
+$readEnc  = [System.Text.Encoding]::UTF8
+$writeEnc = New-Object System.Text.UTF8Encoding($false)
+
+# Cond columns kept (by header index in source CondComerciais.csv):
+#   2=NomeProposta, 4=Segmento, 5=TipoContagem, 10=Fornecimento,
+#   11=DuracaoContrato, 12=Data ini, 13=Data fim,
+#   21=FiltroPrecosIndex_ELE, 23=FiltroTarifaSocial, 25=FiltroNovosClientes,
+#   27=CustoServicos_c/IVA (€/ano), 35=DescontNovoCliente_c/IVA (€/ano)
+$condKeepIdx = @(2, 4, 5, 10, 11, 12, 13, 21, 23, 25, 27, 35)
+
+# Precos columns dropped (only ORD, idx 3). Contagem (idx 5) is kept now -- needed to slice tariff types.
+$precosDropIdx = @(3)
 
 function Compile-Merged {
-    param($condFolder, $precosFolder, $outputFile, $encoding)
+    param($condFolder, $precosFolder, $outputFile, $readEnc, $writeEnc, [int[]]$condKeepIdx, [int[]]$precosDropIdx)
 
-    # Use Precos folder as source of truth for which snapshots to include
     $folders = Get-ChildItem -Path $precosFolder -Directory -ErrorAction SilentlyContinue | Sort-Object Name
 
     $allLines = New-Object System.Collections.ArrayList
@@ -147,51 +158,59 @@ function Compile-Merged {
         if (-not (Test-Path $precosPath)) { continue }
         if (-not (Test-Path $condPath))   { continue }
 
-        # Build COD_Proposta -> Cond fields (NomeProposta, DuracaoContrato, DataIni, DataFim)
-        $condLines = [System.IO.File]::ReadAllLines($condPath, $encoding)
+        # Build COD_Proposta -> joined-Cond-fields (in $condKeepIdx order)
+        $condLines = [System.IO.File]::ReadAllLines($condPath, $readEnc)
         $condIdx = @{}
+        $emptyJoin = (',' * $condKeepIdx.Length).Replace(',', ';').Substring(1)  # 11 semicolons for 12 empty fields
         for ($i = 1; $i -lt $condLines.Length; $i++) {
             $c = $condLines[$i] -split ';'
-            if ($c.Length -lt 14) { continue }
+            if ($c.Length -lt 36) { continue }
             $key = $c[1]
-            $condIdx[$key] = "$($c[2]);$($c[11]);$($c[12]);$($c[13])"
+            $vals = New-Object System.Collections.ArrayList
+            foreach ($kIdx in $condKeepIdx) {
+                if ($kIdx -lt $c.Length) { [void]$vals.Add($c[$kIdx]) } else { [void]$vals.Add('') }
+            }
+            $condIdx[$key] = $vals -join ';'
         }
 
-        $precosLines = [System.IO.File]::ReadAllLines($precosPath, $encoding)
+        $precosLines = [System.IO.File]::ReadAllLines($precosPath, $readEnc)
         if ($precosLines.Length -eq 0) { continue }
 
-        # Header — once across all snapshots
+        # Header
         if (-not $headerWritten) {
             $ph = $precosLines[0] -split ';'
-            $kept = New-Object System.Collections.ArrayList
+            $keptPh = New-Object System.Collections.ArrayList
             for ($j = 0; $j -lt $ph.Length; $j++) {
-                if ($j -ne 3 -and $j -ne 5) { [void]$kept.Add($ph[$j]) }
+                if ($precosDropIdx -notcontains $j) { [void]$keptPh.Add($ph[$j]) }
             }
             $ch = $condLines[0] -split ';'
-            $condHeader = "$($ch[2]);$($ch[11]);$($ch[12]);$($ch[13])"
-            [void]$allLines.Add(($kept -join ';') + ";$condHeader;SnapshotDate")
+            $condHeader = New-Object System.Collections.ArrayList
+            foreach ($kIdx in $condKeepIdx) {
+                if ($kIdx -lt $ch.Length) { [void]$condHeader.Add($ch[$kIdx]) } else { [void]$condHeader.Add('') }
+            }
+            [void]$allLines.Add(($keptPh -join ';') + ';' + ($condHeader -join ';') + ';SnapshotDate')
             $headerWritten = $true
         }
 
-        # Each Precos row -> drop ORD (3) + Contagem (5), join Cond on COD_Proposta (col E = idx 4)
+        # Data rows
         for ($i = 1; $i -lt $precosLines.Length; $i++) {
             $cells = $precosLines[$i] -split ';'
             $codKey = if ($cells.Length -gt 4) { $cells[4] } else { '' }
-            $condData = if ($condIdx.ContainsKey($codKey)) { $condIdx[$codKey] } else { ';;;' }
+            $condData = if ($condIdx.ContainsKey($codKey)) { $condIdx[$codKey] } else { $emptyJoin }
 
             $kept = New-Object System.Collections.ArrayList
             for ($j = 0; $j -lt $cells.Length; $j++) {
-                if ($j -ne 3 -and $j -ne 5) { [void]$kept.Add($cells[$j]) }
+                if ($precosDropIdx -notcontains $j) { [void]$kept.Add($cells[$j]) }
             }
 
-            [void]$allLines.Add(($kept -join ';') + ";$condData;$snapshotDate")
+            [void]$allLines.Add(($kept -join ';') + ';' + $condData + ";$snapshotDate")
         }
     }
 
-    [System.IO.File]::WriteAllLines($outputFile, $allLines, $encoding)
+    [System.IO.File]::WriteAllLines($outputFile, $allLines, $writeEnc)
 }
 
-Compile-Merged -condFolder "$base\Histórico\Condições Comerciais" -precosFolder "$base\Histórico\Preços" -outputFile "$mainDir\ERSE_main.csv" -encoding $enc
+Compile-Merged -condFolder "$base\Histórico\Condições Comerciais" -precosFolder "$base\Histórico\Preços" -outputFile "$mainDir\ERSE_main.csv" -readEnc $readEnc -writeEnc $writeEnc -condKeepIdx $condKeepIdx -precosDropIdx $precosDropIdx
 
 [Console]::Write("$status; Main rebuilt")
 ```
@@ -211,20 +230,41 @@ Compile-Merged -condFolder "$base\Histórico\Condições Comerciais" -precosFold
 
 ## What `ERSE_main.csv` looks like
 
-Single file. Each row is one Precos row enriched with the matching CondComerciais fields and tagged with the snapshot date. Semicolon-delimited, Windows-1252 encoding.
+Single file. Each row is one Precos row enriched with the matching CondComerciais fields and tagged with the snapshot date. Semicolon-delimited, **UTF-8** encoding (no BOM).
 
-```
-COM;Pot_Cont;Escalao;COD_Proposta;TF;TV;TVFV;TVI;TVx;TFGN;TVGN;...;NomeProposta;DuracaoContrato;DataIni;DataFim;SnapshotDate
-CURBEI;1;BEI;CURBEI;0,0897;0,0641;...;Cooperativa BASE 2.0;12;01/03/2025;31/12/2099;2024-12-13 18:22:11
-...
-```
+24 columns total:
 
-Columns:
-- From Precos (after dropping `ORD` and `Contagem`): COM, Pot_Cont, Escalao, COD_Proposta, plus all price columns from TF onwards
-- Joined from CondComerciais on COD_Proposta: NomeProposta, DuracaoContrato, DataIni, DataFim
-- Added by the script: SnapshotDate
+**From Precos** (drop only `ORD`):
+1. `COM` — competitor code
+2. `Pot_Cont` — contracted power (kVA)
+3. `Escalao` — gas consumption band
+4. `COD_Proposta` — offer ID (join key)
+5. `Contagem` — tariff type code: `1`=Simples, `2`=Bi-horária, `3`=Tri-horária, blank=gas only
+6. `TF` — Termo Fixo electricity (€/dia or €/mês)
+7. `TV|TVFV|TVP` — Variable term: TV (Simples) / TVFV (Bi-horária ponta) / TVP (Tri-horária ponta)
+8. `TVV|TVC` — TVV (Bi-horária vazio) / TVC (Tri-horária cheias)
+9. `TVVz` — Tri-horária vazio
+10. `TFGN` — Termo Fixo gas natural
+11. `TVGN` — Termo Variável gas natural
 
-The join is a left join with Precos as the left side: every price row is preserved; if a Precos row has no matching offer in CondComerciais (rare/never), the four joined fields are empty.
+**Joined from CondComerciais** (on `COD_Proposta`):
+12. `NomeProposta` — commercial name
+13. `Segmento` — Dom / Ndom / Tod
+14. `TipoContagem` — supported contagem codes per offer (e.g. `123` = simples + bi + tri)
+15. `Fornecimento` — ELE / GN / DUAL
+16. `DuracaoContrato` — months
+17. `Data ini` — offer start date
+18. `Data fim` — offer end date
+19. `FiltroPrecosIndex_ELE` — indexed-price flag
+20. `FiltroTarifaSocial` — social tariff flag
+21. `FiltroNovosClientes` — new-customer-only flag
+22. `CustoServicos_c/IVA (€/ano)` — bundled services cost (annual, with VAT)
+23. `DescontNovoCliente_c/IVA (€/ano)` — new-customer discount value (€/year)
+
+**Added by the script:**
+24. `SnapshotDate` — when ERSE published this version (datetime)
+
+The join is a left join with Precos as the left side: every price row is preserved; if a Precos row has no matching offer in CondComerciais (rare/never), the joined fields are empty.
 
 ## Test plan
 
