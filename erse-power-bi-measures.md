@@ -1,94 +1,149 @@
-# ERSE Competitive — Power BI Measures (DAX)
+# ERSE Competitive — Power BI Data Model & Measures
 
-31 measures for the ERSE Competitive analysis. The recommended setup is a dedicated **Measures table** — a blank table that holds every measure and keeps them visually separated from the data table. Inside that table, measures are grouped into 7 folders.
+Comprehensive Power BI build on top of the `ERSE_main.csv` produced by the auto-download flow. Includes the data model setup (table types, `dim_COM` competitor table, relationships), and 51 DAX measures organized in 11 folders for serious competitive intelligence.
+
+---
 
 ## ERSE_main — schema reference
 
-The exact column names produced by the auto-download flow + Power Query load are:
+24 columns produced by the latest version of the auto-download script:
 
-| Column | Type | Notes |
-|---|---|---|
-| `COD_Proposta` | Text | Offer code; join key from CondComerciais. |
-| `COM` | Text | Comercializador (competitor code). |
-| `Data fim` | Date | Offer end date (note: name has a space). |
-| `Data ini` | Date | Offer start date (note: name has a space). |
-| `DuracaoContrato` | Decimal | Contract duration in months. |
-| `Escalao` | Text | Consumption band code. |
-| `NomeProposta` | Text | Offer commercial name. |
-| `Pot_Cont` | Decimal | Contracted power (kVA). |
-| `SnapshotDate` | Date/Time | When ERSE published this version. |
-| `TF` | Decimal | Termo Fixo electricity — fixed monthly charge. |
-| `TFGN` | Decimal | Termo Fixo gas natural. |
-| `TV\|TVFV\|TVP` | Decimal | Variable term — value depends on tariff: TV (simples), TVFV (bi-horária ponta/cheias), TVP (tri-horária ponta). **This is the "main" variable term used for competitive comparison.** |
-| `TVGN` | Decimal | Termo Variável gas natural. |
-| `TVV\|TVC` | Decimal | Off-peak / standard variable term: TVV (vazio bi-horária) or TVC (cheias tri-horária). |
-| `TVVz` | Decimal | Termo Variável Vazio — dedicated off-peak rate (tri-horária vazio). |
+| # | Column | Type | Notes |
+|---|---|---|---|
+| 1 | `COM` | Text | Competitor code |
+| 2 | `Pot_Cont` | Decimal | Contracted power (kVA) |
+| 3 | `Escalao` | Text | Gas consumption band |
+| 4 | `COD_Proposta` | Text | Offer ID |
+| 5 | `Contagem` | Text | `1`=Simples, `2`=Bi-horária, `3`=Tri-horária, blank=gas only |
+| 6 | `TF` | Decimal | Termo Fixo electricity (€/dia) |
+| 7 | `TV\|TVFV\|TVP` | Decimal | Main variable term (price during peak/cheias hours) |
+| 8 | `TVV\|TVC` | Decimal | Off-peak/middle variable term |
+| 9 | `TVVz` | Decimal | Tri-horária vazio (off-peak) |
+| 10 | `TFGN` | Decimal | Termo Fixo gas natural |
+| 11 | `TVGN` | Decimal | Termo Variável gas natural |
+| 12 | `NomeProposta` | Text | Commercial offer name |
+| 13 | `Segmento` | Text | `Dom`/`Ndom`/`Tod` |
+| 14 | `TipoContagem` | Text | Supported contagem codes per offer |
+| 15 | `Fornecimento` | Text | `ELE`/`GN`/`DUAL` |
+| 16 | `DuracaoContrato` | Decimal | Months |
+| 17 | `Data ini` | Date | Offer start (note name has space) |
+| 18 | `Data fim` | Date | Offer end (note name has space) |
+| 19 | `FiltroPrecosIndex_ELE` | Text | `S`/`N` — indexed pricing flag |
+| 20 | `FiltroTarifaSocial` | Text | `S`/`N` — social tariff flag |
+| 21 | `FiltroNovosClientes` | Text | `S`/`N` — new-customer-only flag |
+| 22 | `CustoServicos_c/IVA (€/ano)` | Decimal | Bundled services cost (annual) |
+| 23 | `DescontNovoCliente_c/IVA (€/ano)` | Decimal | New-customer discount value |
+| 24 | `SnapshotDate` | Date/Time | ERSE publication time |
 
-**Important**: the `\|` character above is a literal pipe `|` (Markdown table escape). The actual column names contain the pipe character, e.g. `TV|TVFV|TVP`.
-
-In DAX, reference these columns with the pipe inside brackets:
-
-```
-'ERSE_main'[TV|TVFV|TVP]
-```
-
-The brackets handle special characters as literal — no quoting needed beyond that.
-
-## Prerequisites in the model
-
-Before creating the measures, make sure the columns of `ERSE_main` have the right types in Power Query (Edit Queries → select column → Data Type):
-
-- `SnapshotDate` → **Date/Time**
-- `DataIni`, `DataFim` → **Date** (or Date/Time)
-- `Pot_Cont`, `Escalao`, `DuracaoContrato`, all price columns (`TF`, `TV`, `TVFV`, `TVI`, `TVx`, `TFGN`, `TVGN`, ...) → **Decimal Number** (use locale "Portuguese (Portugal)" if comma is the decimal separator)
-- `COM`, `COD_Proposta`, `NomeProposta` → **Text**
-
-Without correct types, time-intelligence measures silently produce blank.
+**Important**: pipe `\|` in column names is a literal `|`. Reference in DAX: `'ERSE_main'[TV|TVFV|TVP]` — the brackets handle special chars literally.
 
 ---
 
-## Step 1 — Create a blank "Measures" table
+## Step 1 — Power Query setup
 
-The cleanest way to organize measures is a dedicated empty table.
+In the Power Query Editor (Base → Transformar dados):
 
-1. Home ribbon → **Enter data** (Inserir dados).
-2. In the dialog, leave the single empty cell as is. Name the column anything (e.g. `Placeholder`).
-3. Change the **Table name** at the bottom to `_Measures` (the underscore prefix sorts it to the top of the data pane).
-4. Click **Load**.
-5. In the data pane on the right, you'll now see `_Measures` with one column.
-6. Right-click the `Placeholder` column → **Hide in report view**.
-7. After step 8 below (creating the first measure inside this table), the table icon will change to a calculator icon — meaning Power BI now recognizes it as a measures-only table and will pin it at the top.
+1. Select query `ERSE_main` → **Definições da Origem** → set **Origem do ficheiro** locale to **"Português (Portugal)"** (so commas decode as decimals).
+2. Set column types (right-click each column header → Tipo de dados):
+   - Date/Time: `SnapshotDate`
+   - Date: `Data ini`, `Data fim`
+   - Decimal Number: `Pot_Cont`, all six price columns (TF, TV|TVFV|TVP, TVV|TVC, TVVz, TFGN, TVGN), `DuracaoContrato`, `CustoServicos_c/IVA (€/ano)`, `DescontNovoCliente_c/IVA (€/ano)`
+   - Text: everything else
+3. Apply.
 
-## Step 2 — Create the 7 folders (just by typing the folder name when you create each measure)
-
-Folders aren't created in advance — they appear automatically when at least one measure has that folder set in its **Display folder** property. The 7 folders we'll use:
-
-- `Snapshots`
-- `Counts`
-- `Pricing - Current`
-- `Pricing - Changes`
-- `Ranking`
-- `Offer Characteristics`
-- `Activity`
-
-## Step 3 — For each measure below
-
-Repeat this 31 times:
-
-1. **Right-click the `_Measures` table** in the data pane → **New measure**.
-2. In the formula bar that opens, **delete** the placeholder text (`Measure = ...`).
-3. **Paste the full DAX block from below** (it includes the measure name and the `=` sign).
-4. Click the checkmark to confirm.
-5. With the new measure still selected (single click in the data pane), look at the **Properties** pane on the right. If you don't see it: View ribbon → check **Properties pane**.
-6. In Properties, set:
-   - **Display folder** → type the folder name (e.g. `Snapshots`)
-   - **Format string** → type the format from the "Format" line below the DAX (e.g. `0.0000`)
-
-Tip: you can do all 31 DAX-paste steps first (steps 1-4), then go back and set all the Display folders in one batch (steps 5-6) — faster.
+If Power Query refuses to convert empty cells in the price columns: replace empty with `null` first (right-click column → Substituir Valores → empty → null), then convert.
 
 ---
 
-## The 31 measures
+## Step 2 — Create the `dim_COM` table
+
+This is the competitor dimension. It joins to `ERSE_main` on `COM` and lets visuals filter cleanly to "Own Company", "Key Competitors", etc.
+
+### How to add it
+
+In Power BI Desktop:
+
+1. Modeling ribbon → **New table**.
+2. Paste the DAX below.
+
+```dax
+dim_COM = 
+DATATABLE(
+    "COM", STRING,
+    "Comercializador", STRING,
+    "IsOwnCompany", BOOLEAN,
+    "IsKeyCompetitor", BOOLEAN,
+    "ComGroup", STRING,
+    {
+        // Replace <YourCompanyCOM> and "<Your Company Name>" with your actual codes
+        {"<YourCompanyCOM>", "<Your Company Name>", TRUE, FALSE, "Own"},
+
+        // Major competitors — set IsKeyCompetitor = TRUE for the ones you want pinned in visuals
+        {"EDPC",         "EDP",         FALSE, TRUE,  "Key Competitor"},
+        {"GALP",         "Galp",        FALSE, TRUE,  "Key Competitor"},
+        {"END",          "Endesa",      FALSE, TRUE,  "Key Competitor"},
+        {"IBD",          "Iberdrola",   FALSE, TRUE,  "Key Competitor"},
+        {"GOLD",         "Gold Energy", FALSE, TRUE,  "Key Competitor"},
+        {"ENIPLENITUDE", "Plenitude",   FALSE, TRUE,  "Key Competitor"},
+        {"G9ENERGY",     "G9",          FALSE, TRUE,  "Key Competitor"},
+        {"MEOENERGIA",   "MEO",         FALSE, TRUE,  "Key Competitor"},
+
+        // Other suppliers (not flagged as key — IsKeyCompetitor = FALSE)
+        {"ALFAENERGIA",   "Alfa Energia",   FALSE, FALSE, "Other"},
+        {"AUDAX",         "Audax",          FALSE, FALSE, "Other"},
+        {"AXPO",          "Axpo",           FALSE, FALSE, "Other"},
+        {"COOP",          "Coopérnico",     FALSE, FALSE, "Other"},
+        {"CUR",           "CUR",            FALSE, FALSE, "Other"},
+        {"DOUROGAS",      "Dourogás",       FALSE, FALSE, "Other"},
+        {"ELERGONE",      "Elergone",       FALSE, FALSE, "Other"},
+        {"EZUENERGIA",    "EZU",            FALSE, FALSE, "Other"},
+        {"IBELECTRA",     "Ibelectra",      FALSE, FALSE, "Other"},
+        {"JAFPLUS",       "JAF Plus",       FALSE, FALSE, "Other"},
+        {"LOGICA",        "Lógica Energy",  FALSE, FALSE, "Other"},
+        {"LUZBOA",        "LuzBoa",         FALSE, FALSE, "Other"},
+        {"LUZIGAS",       "LuziGás",        FALSE, FALSE, "Other"},
+        {"MUON",          "Muon",           FALSE, FALSE, "Other"},
+        {"NABALIAENERGIA","Nabalia",        FALSE, FALSE, "Other"},
+        {"NOSSAENERGIA",  "Nossa Energia",  FALSE, FALSE, "Other"},
+        {"OENEO",         "OENEO",          FALSE, FALSE, "Other"},
+        {"PORTULOGOS",    "Portulogos",     FALSE, FALSE, "Other"},
+        {"TUR",           "TUR (Regulado)", FALSE, FALSE, "Regulated"},
+        {"U1",            "U1",             FALSE, FALSE, "Other"},
+        {"USENERGY",      "USEnergy",       FALSE, FALSE, "Other"},
+        {"YESENERGY",     "Yes Energy",     FALSE, FALSE, "Other"},
+        {"ZUG POWER",     "ZUG Power",      FALSE, FALSE, "Other"}
+    }
+)
+```
+
+### Add the relationship
+
+1. Model view → drag `ERSE_main[COM]` onto `dim_COM[COM]`.
+2. Cardinality: **Many-to-one** (ERSE_main is many, dim_COM is one).
+3. Cross-filter direction: **Single** (default).
+
+After this, every measure / visual can filter by `dim_COM[IsOwnCompany]` or `dim_COM[IsKeyCompetitor]` instead of hardcoding COM lists.
+
+---
+
+## Step 3 — Create the `_Measures` table
+
+A blank table that holds every measure.
+
+1. Home ribbon → **Inserir dados**.
+2. Leave default cell. Name the column `Placeholder`. Name the table `_Measures` (underscore sorts to top).
+3. Click **Carregar**.
+4. Right-click `Placeholder` column → **Ocultar na vista de relatório**.
+
+---
+
+## Step 4 — Create all 51 measures
+
+For each measure below: right-click `_Measures` → **Nova medida** → paste the DAX → Enter → in the **Propriedades** pane on the right, set **Display folder** and **Format string**.
+
+> **DAX cardinal rule**: never reference a measure directly in a `CALCULATE` Boolean filter (`column = [Measure]`). Always wrap with `VAR LatestDate = [Latest Snapshot] RETURN CALCULATE(..., column = LatestDate)`. The error message `function 'PLACEHOLDER'` is the symptom of breaking this rule.
+
+---
 
 ### Folder: Snapshots
 
@@ -111,7 +166,6 @@ Format: `dd/mm/yyyy hh:mm:ss`
 ```
 Latest Snapshot Display = FORMAT([Latest Snapshot], "dd/mm/yyyy hh:mm")
 ```
-Format: *(leave blank — already a string)*
 
 ```
 # Snapshots = DISTINCTCOUNT('ERSE_main'[SnapshotDate])
@@ -188,7 +242,9 @@ RETURN
 ```
 Format: `#,0`
 
-### Folder: Pricing - Current
+### Folder: Pricing - Current (Peak/Simples)
+
+These use `TV|TVFV|TVP` — the main variable term that applies to peak / simples customers.
 
 ```
 Avg TF Latest =
@@ -266,6 +322,100 @@ TV Spread Latest = [Max TV Latest] - [Min TV Latest]
 ```
 Format: `0.0000`
 
+### Folder: Pricing - Off-Peak
+
+These use `TVV|TVC` (vazio bi-horária / cheias tri-horária) and `TVVz` (vazio tri-horária).
+
+```
+Avg TVV Latest =
+VAR LatestDate = [Latest Snapshot]
+RETURN
+CALCULATE(
+    AVERAGE('ERSE_main'[TVV|TVC]),
+    'ERSE_main'[SnapshotDate] = LatestDate
+)
+```
+Format: `0.0000`
+
+```
+Avg TVVz Latest =
+VAR LatestDate = [Latest Snapshot]
+RETURN
+CALCULATE(
+    AVERAGE('ERSE_main'[TVVz]),
+    'ERSE_main'[SnapshotDate] = LatestDate
+)
+```
+Format: `0.0000`
+
+```
+Min TVV Latest =
+VAR LatestDate = [Latest Snapshot]
+RETURN
+CALCULATE(
+    MIN('ERSE_main'[TVV|TVC]),
+    'ERSE_main'[SnapshotDate] = LatestDate
+)
+```
+Format: `0.0000`
+
+```
+Min TVVz Latest =
+VAR LatestDate = [Latest Snapshot]
+RETURN
+CALCULATE(
+    MIN('ERSE_main'[TVVz]),
+    'ERSE_main'[SnapshotDate] = LatestDate
+)
+```
+Format: `0.0000`
+
+### Folder: Pricing - Gas
+
+```
+Avg TFGN Latest =
+VAR LatestDate = [Latest Snapshot]
+RETURN
+CALCULATE(
+    AVERAGE('ERSE_main'[TFGN]),
+    'ERSE_main'[SnapshotDate] = LatestDate
+)
+```
+Format: `0.0000`
+
+```
+Avg TVGN Latest =
+VAR LatestDate = [Latest Snapshot]
+RETURN
+CALCULATE(
+    AVERAGE('ERSE_main'[TVGN]),
+    'ERSE_main'[SnapshotDate] = LatestDate
+)
+```
+Format: `0.0000`
+
+```
+Min TFGN Latest =
+VAR LatestDate = [Latest Snapshot]
+RETURN
+CALCULATE(
+    MIN('ERSE_main'[TFGN]),
+    'ERSE_main'[SnapshotDate] = LatestDate
+)
+```
+Format: `0.0000`
+
+```
+Min TVGN Latest =
+VAR LatestDate = [Latest Snapshot]
+RETURN
+CALCULATE(
+    MIN('ERSE_main'[TVGN]),
+    'ERSE_main'[SnapshotDate] = LatestDate
+)
+```
+Format: `0.0000`
+
 ### Folder: Pricing - Changes
 
 ```
@@ -316,58 +466,64 @@ VAR LatestDate = [Latest Snapshot]
 VAR PrevDate = [Previous Snapshot]
 VAR Pairs =
     ADDCOLUMNS(
-        SUMMARIZE('ERSE_main', 'ERSE_main'[COD_Proposta], 'ERSE_main'[Pot_Cont]),
+        SUMMARIZE('ERSE_main', 'ERSE_main'[COD_Proposta], 'ERSE_main'[Pot_Cont], 'ERSE_main'[Contagem]),
         "LatestTF", CALCULATE(MAX('ERSE_main'[TF]), 'ERSE_main'[SnapshotDate] = LatestDate),
-        "PrevTF", CALCULATE(MAX('ERSE_main'[TF]), 'ERSE_main'[SnapshotDate] = PrevDate)
+        "PrevTF",   CALCULATE(MAX('ERSE_main'[TF]), 'ERSE_main'[SnapshotDate] = PrevDate),
+        "LatestTV", CALCULATE(MAX('ERSE_main'[TV|TVFV|TVP]), 'ERSE_main'[SnapshotDate] = LatestDate),
+        "PrevTV",   CALCULATE(MAX('ERSE_main'[TV|TVFV|TVP]), 'ERSE_main'[SnapshotDate] = PrevDate)
     )
 RETURN
     COUNTROWS(
         FILTER(
             Pairs,
-            NOT ISBLANK([LatestTF]) && NOT ISBLANK([PrevTF]) && [LatestTF] <> [PrevTF]
+            (NOT ISBLANK([LatestTF]) && NOT ISBLANK([PrevTF]) && [LatestTF] <> [PrevTF]) ||
+            (NOT ISBLANK([LatestTV]) && NOT ISBLANK([PrevTV]) && [LatestTV] <> [PrevTV])
         )
     )
 ```
 Format: `#,0`
 
 ```
-Trend Direction =
+Trend Direction TF =
 SWITCH(
     TRUE(),
-    [TF Delta vs Previous] > 0, "↑ Up",
-    [TF Delta vs Previous] < 0, "↓ Down",
-    "= Same"
+    [TF Delta vs Previous] > 0, "↑ Subiu",
+    [TF Delta vs Previous] < 0, "↓ Desceu",
+    "= Igual"
 )
 ```
-Format: *(leave blank — string)*
 
 ### Folder: Ranking
 
 ```
-Rank by TF =
+Rank by TF (Key Competitors) =
 IF(
-    ISINSCOPE('ERSE_main'[COM]),
-    RANKX(
-        ALL('ERSE_main'[COM]),
-        [Avg TF Latest],
-        ,
-        ASC,
-        Dense
+    ISINSCOPE(dim_COM[COM]),
+    CALCULATE(
+        RANKX(
+            CALCULATETABLE(VALUES(dim_COM[COM]), dim_COM[IsKeyCompetitor] = TRUE() || dim_COM[IsOwnCompany] = TRUE()),
+            [Avg TF Latest],
+            ,
+            ASC,
+            Dense
+        )
     )
 )
 ```
 Format: `#,0`
 
 ```
-Rank by TV =
+Rank by TV (Key Competitors) =
 IF(
-    ISINSCOPE('ERSE_main'[COM]),
-    RANKX(
-        ALL('ERSE_main'[COM]),
-        [Avg TV Latest],
-        ,
-        ASC,
-        Dense
+    ISINSCOPE(dim_COM[COM]),
+    CALCULATE(
+        RANKX(
+            CALCULATETABLE(VALUES(dim_COM[COM]), dim_COM[IsKeyCompetitor] = TRUE() || dim_COM[IsOwnCompany] = TRUE()),
+            [Avg TV Latest],
+            ,
+            ASC,
+            Dense
+        )
     )
 )
 ```
@@ -378,7 +534,7 @@ Distance to Cheapest TF =
 [Avg TF Latest] -
 CALCULATE(
     [Min TF Latest],
-    ALL('ERSE_main'[COM])
+    ALL(dim_COM[COM])
 )
 ```
 Format: `+0.0000;-0.0000;0.0000`
@@ -391,14 +547,14 @@ RETURN
 CALCULATE(
     AVERAGE('ERSE_main'[TF]),
     'ERSE_main'[SnapshotDate] = LatestDate,
-    ALL('ERSE_main'[COM])
+    ALL(dim_COM[COM])
 )
 ```
 Format: `+0.0000;-0.0000;0.0000`
 
 ```
 TF Position Label =
-VAR R = [Rank by TF]
+VAR R = [Rank by TF (Key Competitors)]
 RETURN
     IF(
         NOT ISBLANK(R),
@@ -406,7 +562,210 @@ RETURN
         BLANK()
     )
 ```
-Format: *(leave blank — string)*
+
+### Folder: Own vs Market
+
+These compare your own company directly to the market. They depend on `dim_COM[IsOwnCompany]` being TRUE for your COM.
+
+```
+Own TF Latest =
+CALCULATE(
+    [Avg TF Latest],
+    dim_COM[IsOwnCompany] = TRUE()
+)
+```
+Format: `0.0000`
+
+```
+Market TF Latest (excl. Own) =
+CALCULATE(
+    [Avg TF Latest],
+    dim_COM[IsOwnCompany] = FALSE(),
+    dim_COM[IsKeyCompetitor] = TRUE()
+)
+```
+Format: `0.0000`
+
+```
+Own vs Market TF Δ =
+[Own TF Latest] - [Market TF Latest (excl. Own)]
+```
+Format: `+0.0000;-0.0000;0.0000`
+
+```
+Own vs Market TF % =
+DIVIDE(
+    [Own vs Market TF Δ],
+    [Market TF Latest (excl. Own)]
+)
+```
+Format: `+0.00%;-0.00%;0.00%`
+
+```
+Own TV Latest =
+CALCULATE(
+    [Avg TV Latest],
+    dim_COM[IsOwnCompany] = TRUE()
+)
+```
+Format: `0.0000`
+
+```
+Market TV Latest (excl. Own) =
+CALCULATE(
+    [Avg TV Latest],
+    dim_COM[IsOwnCompany] = FALSE(),
+    dim_COM[IsKeyCompetitor] = TRUE()
+)
+```
+Format: `0.0000`
+
+```
+Own vs Market TV Δ = [Own TV Latest] - [Market TV Latest (excl. Own)]
+```
+Format: `+0.0000;-0.0000;0.0000`
+
+```
+Own vs Market TV % =
+DIVIDE(
+    [Own vs Market TV Δ],
+    [Market TV Latest (excl. Own)]
+)
+```
+Format: `+0.00%;-0.00%;0.00%`
+
+### Folder: Discounts & Promos
+
+```
+Avg New-Customer Discount Latest =
+VAR LatestDate = [Latest Snapshot]
+RETURN
+CALCULATE(
+    AVERAGE('ERSE_main'[DescontNovoCliente_c/IVA (€/ano)]),
+    'ERSE_main'[SnapshotDate] = LatestDate,
+    'ERSE_main'[DescontNovoCliente_c/IVA (€/ano)] > 0
+)
+```
+Format: `€#,0.00`
+
+```
+Max New-Customer Discount Latest =
+VAR LatestDate = [Latest Snapshot]
+RETURN
+CALCULATE(
+    MAX('ERSE_main'[DescontNovoCliente_c/IVA (€/ano)]),
+    'ERSE_main'[SnapshotDate] = LatestDate
+)
+```
+Format: `€#,0.00`
+
+```
+# Offers With New-Customer Discount =
+VAR LatestDate = [Latest Snapshot]
+RETURN
+CALCULATE(
+    DISTINCTCOUNT('ERSE_main'[COD_Proposta]),
+    'ERSE_main'[SnapshotDate] = LatestDate,
+    'ERSE_main'[DescontNovoCliente_c/IVA (€/ano)] > 0
+)
+```
+Format: `#,0`
+
+```
+% Offers With Discount =
+VAR LatestDate = [Latest Snapshot]
+VAR Total =
+    CALCULATE(
+        DISTINCTCOUNT('ERSE_main'[COD_Proposta]),
+        'ERSE_main'[SnapshotDate] = LatestDate
+    )
+RETURN
+    DIVIDE([# Offers With New-Customer Discount], Total)
+```
+Format: `0.0%`
+
+### Folder: Mix
+
+```
+% Indexed Offers =
+VAR LatestDate = [Latest Snapshot]
+VAR Indexed =
+    CALCULATE(
+        DISTINCTCOUNT('ERSE_main'[COD_Proposta]),
+        'ERSE_main'[SnapshotDate] = LatestDate,
+        'ERSE_main'[FiltroPrecosIndex_ELE] = "S"
+    )
+VAR Total =
+    CALCULATE(
+        DISTINCTCOUNT('ERSE_main'[COD_Proposta]),
+        'ERSE_main'[SnapshotDate] = LatestDate
+    )
+RETURN
+    DIVIDE(Indexed, Total)
+```
+Format: `0.0%`
+
+```
+% Fixed Offers = 1 - [% Indexed Offers]
+```
+Format: `0.0%`
+
+```
+% Domestic Offers =
+VAR LatestDate = [Latest Snapshot]
+VAR Dom =
+    CALCULATE(
+        DISTINCTCOUNT('ERSE_main'[COD_Proposta]),
+        'ERSE_main'[SnapshotDate] = LatestDate,
+        'ERSE_main'[Segmento] = "Dom"
+    )
+VAR Total =
+    CALCULATE(
+        DISTINCTCOUNT('ERSE_main'[COD_Proposta]),
+        'ERSE_main'[SnapshotDate] = LatestDate
+    )
+RETURN
+    DIVIDE(Dom, Total)
+```
+Format: `0.0%`
+
+```
+% Dual Offers =
+VAR LatestDate = [Latest Snapshot]
+VAR Dual =
+    CALCULATE(
+        DISTINCTCOUNT('ERSE_main'[COD_Proposta]),
+        'ERSE_main'[SnapshotDate] = LatestDate,
+        'ERSE_main'[Fornecimento] = "DUAL"
+    )
+VAR Total =
+    CALCULATE(
+        DISTINCTCOUNT('ERSE_main'[COD_Proposta]),
+        'ERSE_main'[SnapshotDate] = LatestDate
+    )
+RETURN
+    DIVIDE(Dual, Total)
+```
+Format: `0.0%`
+
+```
+% New Customer Only Offers =
+VAR LatestDate = [Latest Snapshot]
+VAR NewOnly =
+    CALCULATE(
+        DISTINCTCOUNT('ERSE_main'[COD_Proposta]),
+        'ERSE_main'[SnapshotDate] = LatestDate,
+        'ERSE_main'[FiltroNovosClientes] = "S"
+    )
+VAR Total =
+    CALCULATE(
+        DISTINCTCOUNT('ERSE_main'[COD_Proposta]),
+        'ERSE_main'[SnapshotDate] = LatestDate
+    )
+RETURN
+    DIVIDE(NewOnly, Total)
+```
+Format: `0.0%`
 
 ### Folder: Offer Characteristics
 
@@ -445,6 +804,17 @@ CALCULATE(
 ```
 Format: `#,0`
 
+```
+Avg Services Cost =
+VAR LatestDate = [Latest Snapshot]
+RETURN
+CALCULATE(
+    AVERAGE('ERSE_main'[CustoServicos_c/IVA (€/ano)]),
+    'ERSE_main'[SnapshotDate] = LatestDate
+)
+```
+Format: `€#,0.00`
+
 ### Folder: Activity
 
 ```
@@ -475,68 +845,36 @@ Format: `#,0`
 
 ---
 
-## After creating all measures
+## After all measures are in
 
-Once all 31 measures are in `_Measures` with their folders set, the data pane should show:
+The `_Measures` table should look like this in the data pane:
 
 ```
 _Measures (calculator icon)
-├── Activity
-│   ├── # Snapshots With Changes (Last 30d)
-│   └── Activity Score (Last 30d)
-├── Counts
-│   ├── # Active Competitors
-│   ├── # Active Offers
-│   ├── # New Offers (Last 30d)
-│   ├── # New Offers (Since Previous)
-│   └── # Offers Discontinued (Since Previous)
-├── Offer Characteristics
-│   ├── # Long-term Offers (>=24m)
-│   ├── # Short-term Offers (<12m)
-│   └── Avg Contract Duration
-├── Pricing - Changes
-│   ├── # Price Changes (Since Previous)
-│   ├── Avg TF Previous
-│   ├── Avg TV Previous
-│   ├── TF % vs Previous
-│   ├── TF Delta vs Previous
-│   ├── Trend Direction
-│   ├── TV % vs Previous
-│   └── TV Delta vs Previous
-├── Pricing - Current
-│   ├── Avg TF Latest
-│   ├── Avg TV Latest
-│   ├── Max TF Latest
-│   ├── Max TV Latest
-│   ├── Min TF Latest
-│   ├── Min TV Latest
-│   ├── TF Spread Latest
-│   └── TV Spread Latest
-├── Ranking
-│   ├── Distance to Avg TF
-│   ├── Distance to Cheapest TF
-│   ├── Rank by TF
-│   ├── Rank by TV
-│   └── TF Position Label
-└── Snapshots
-    ├── # Snapshots
-    ├── Days Since Last Update
-    ├── Latest Snapshot
-    ├── Latest Snapshot Display
-    └── Previous Snapshot
+├── Activity (2)
+├── Counts (5)
+├── Discounts & Promos (4)
+├── Mix (5)
+├── Offer Characteristics (4)
+├── Own vs Market (8)
+├── Pricing - Changes (8)
+├── Pricing - Current (Peak/Simples) (8)
+├── Pricing - Gas (4)
+├── Pricing - Off-Peak (4)
+├── Ranking (5)
+└── Snapshots (5)
+
+Total: 51 measures across 12 folders.
 ```
 
-ERSE_main should still be in the data pane below `_Measures`, holding the actual data columns.
+(Plus Power BI auto-generates 0 columns since `_Measures` is now a measures-only table.)
 
-## Suggested first visuals
-
-1. **Cover page KPI cards**: `Latest Snapshot Display`, `# Active Offers`, `# Active Competitors`, `Days Since Last Update`, `# New Offers (Since Previous)`, `# Price Changes (Since Previous)`.
-2. **Price positioning matrix**: rows = `COM`, columns = `Pot_Cont`, values = `Avg TF Latest`. Conditional formatting (heatmap). Slicer on `Pot_Cont`.
-3. **Trend line**: x-axis = `SnapshotDate`, y-axis = `Avg TF Latest` and `Avg TV Latest`, legend = `COM`. Slicer on `Pot_Cont`.
+---
 
 ## Common pitfalls
 
-- **Error: "function 'PLACEHOLDER' was used in a True/False expression..."** → DAX cannot reference a measure directly inside a Boolean filter of `CALCULATE`. The pattern `CALCULATE(..., column = [SomeMeasure])` fails. Always wrap with `VAR`-`RETURN`: assign the measure to a variable first, then compare to the variable. All measures in this doc already follow this pattern; if you write your own, remember the rule.
-- **`SnapshotDate` is text, not date** → all time arithmetic returns blank. Fix the column type in Power Query first.
-- **Decimal columns parse with `,` vs `.`** → if `Avg TF Latest` is suspiciously huge (millions instead of <1), the locale was misread. In Power Query, set the file's locale to "Portuguese (Portugal)" before changing type.
-- **`Rank by TF` shows blank** outside of a `COM` context — that's correct, by design (the `ISINSCOPE` guard). It only renders when slicing/grouping by COM.
+- **Error: "function 'PLACEHOLDER' was used in a True/False expression..."** → cannot reference a measure in a `CALCULATE` Boolean filter. Use the `VAR LatestDate = [Latest Snapshot] RETURN CALCULATE(..., column = LatestDate)` pattern. All measures here already follow it.
+- **Decimal columns parse as integers (or fail)** → check the file's locale in Power Query is set to "Português (Portugal)" so `,` is treated as decimal separator.
+- **`IsOwnCompany` measures all return blank** → you forgot to set `IsOwnCompany = TRUE` for at least one row in `dim_COM`. Edit the table.
+- **`Rank by TF (Key Competitors)` is blank everywhere** → expected if no `COM` is in the visual context (the `ISINSCOPE` guard is by design). Add `dim_COM[Comercializador]` to a row/column slot in your visual.
+- **`SnapshotDate` arithmetic returns blank** → confirm column type is Date/Time, not Text. Power Query → Tipo de dados.
