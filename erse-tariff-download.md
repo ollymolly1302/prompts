@@ -118,6 +118,179 @@ if ((Test-Path "$condHist\CondComerciais.csv") -and (Test-Path "$precosHist\Prec
     $status = "UPDATED: $timestamp"
 }
 
+# === Detect changes vs previous snapshot (for email alert) ===
+$emailBodyPath = "$base\_state\email_body.html"
+$changeStats = ''
+
+if ($status -like 'UPDATED:*') {
+    $readEncDiff = [System.Text.Encoding]::UTF8
+    $writeEncDiff = New-Object System.Text.UTF8Encoding($false)
+
+    # Find previous snapshot folder
+    $allHistFolders = Get-ChildItem -Path "$base\Histórico\Preços" -Directory -ErrorAction SilentlyContinue | Sort-Object Name
+    $prevFolder = $allHistFolders | Where-Object { $_.Name -lt $timestamp } | Select-Object -Last 1
+
+    if ($prevFolder) {
+        $oldPrecosPath = Join-Path $prevFolder.FullName 'Precos_ELEGN.csv'
+        $oldCondPath   = Join-Path "$base\Histórico\Condições Comerciais\$($prevFolder.Name)" 'CondComerciais.csv'
+        $newPrecosPath = "$precosHist\Precos_ELEGN.csv"
+        $newCondPath   = "$condHist\CondComerciais.csv"
+
+        if ((Test-Path $oldPrecosPath) -and (Test-Path $oldCondPath)) {
+            $oldPrecos = [System.IO.File]::ReadAllLines($oldPrecosPath, $readEncDiff)
+            $newPrecos = [System.IO.File]::ReadAllLines($newPrecosPath, $readEncDiff)
+            $oldCond   = [System.IO.File]::ReadAllLines($oldCondPath,   $readEncDiff)
+            $newCond   = [System.IO.File]::ReadAllLines($newCondPath,   $readEncDiff)
+
+            # COD -> NomeProposta maps
+            $codNameNew = @{}
+            for ($i = 1; $i -lt $newCond.Length; $i++) {
+                $c = $newCond[$i] -split ';'
+                if ($c.Length -ge 3) { $codNameNew[$c[1]] = $c[2] }
+            }
+            $codNameOld = @{}
+            for ($i = 1; $i -lt $oldCond.Length; $i++) {
+                $c = $oldCond[$i] -split ';'
+                if ($c.Length -ge 3) { $codNameOld[$c[1]] = $c[2] }
+            }
+
+            # Distinct CODs in each side
+            $codsNew = New-Object System.Collections.Generic.HashSet[string]
+            for ($i = 1; $i -lt $newPrecos.Length; $i++) {
+                $r = $newPrecos[$i] -split ';'
+                if ($r.Length -gt 4) { [void]$codsNew.Add($r[4]) }
+            }
+            $codsOld = New-Object System.Collections.Generic.HashSet[string]
+            for ($i = 1; $i -lt $oldPrecos.Length; $i++) {
+                $r = $oldPrecos[$i] -split ';'
+                if ($r.Length -gt 4) { [void]$codsOld.Add($r[4]) }
+            }
+
+            $newCods = @($codsNew | Where-Object { -not $codsOld.Contains($_) })
+            $discontCods = @($codsOld | Where-Object { -not $codsNew.Contains($_) })
+
+            # OLD price lookup
+            $priceColIdxs  = @(6, 7, 8, 9, 10, 11)
+            $priceColNames = @('TF', 'TV|TVFV|TVP', 'TVV|TVC', 'TVVz', 'TFGN', 'TVGN')
+
+            $oldLookup = @{}
+            for ($i = 1; $i -lt $oldPrecos.Length; $i++) {
+                $r = $oldPrecos[$i] -split ';'
+                if ($r.Length -lt 12) { continue }
+                $key = "$($r[4])|$($r[1])|$($r[2])|$($r[5])"
+                $oldLookup[$key] = $r
+            }
+
+            # Detect price changes
+            $changes = New-Object System.Collections.ArrayList
+            for ($i = 1; $i -lt $newPrecos.Length; $i++) {
+                $r = $newPrecos[$i] -split ';'
+                if ($r.Length -lt 12) { continue }
+                $cod = $r[4]
+                if ($newCods -contains $cod) { continue }
+                $key = "$cod|$($r[1])|$($r[2])|$($r[5])"
+                if (-not $oldLookup.ContainsKey($key)) { continue }
+                $oldRow = $oldLookup[$key]
+                for ($j = 0; $j -lt $priceColIdxs.Length; $j++) {
+                    $colIdx = $priceColIdxs[$j]
+                    $oldV = if ($colIdx -lt $oldRow.Length) { $oldRow[$colIdx] } else { '' }
+                    $newV = if ($colIdx -lt $r.Length)      { $r[$colIdx] }      else { '' }
+                    if ($oldV -ne $newV -and -not ([string]::IsNullOrEmpty($oldV) -and [string]::IsNullOrEmpty($newV))) {
+                        [void]$changes.Add([pscustomobject]@{
+                            Cod  = $cod
+                            Nome = if ($codNameNew.ContainsKey($cod)) { $codNameNew[$cod] } else { $cod }
+                            Pot  = $r[1]
+                            Cont = $r[5]
+                            Col  = $priceColNames[$j]
+                            Old  = $oldV
+                            New  = $newV
+                        })
+                    }
+                }
+            }
+
+            $changeStats = "$($changes.Count) precos alterados; $($newCods.Count) novas; $($discontCods.Count) descontinuadas"
+
+            # Build HTML email body
+            $sbHtml = New-Object System.Text.StringBuilder
+            [void]$sbHtml.AppendLine("<html><head><style>")
+            [void]$sbHtml.AppendLine("body{font-family:Calibri,Arial,sans-serif;font-size:11pt}")
+            [void]$sbHtml.AppendLine("table{border-collapse:collapse;margin-bottom:16px}")
+            [void]$sbHtml.AppendLine("th,td{border:1px solid #ccc;padding:4px 8px}")
+            [void]$sbHtml.AppendLine("th{background:#f0f0f0;text-align:left}")
+            [void]$sbHtml.AppendLine(".up{color:#c13434}.down{color:#1b7f3a}")
+            [void]$sbHtml.AppendLine(".s{background:#fff7e6;padding:10px;border-left:3px solid #e87722;margin-bottom:16px}")
+            [void]$sbHtml.AppendLine("</style></head><body>")
+            [void]$sbHtml.AppendLine("<h2>ERSE Competitive - Alteracoes detectadas</h2>")
+            [void]$sbHtml.AppendLine("<div class='s'>")
+            [void]$sbHtml.AppendLine("<b>Snapshot novo:</b> $timestamp<br>")
+            [void]$sbHtml.AppendLine("<b>Snapshot anterior:</b> $($prevFolder.Name)<br>")
+            [void]$sbHtml.AppendLine("<b>Alteracoes de preco:</b> $($changes.Count)<br>")
+            [void]$sbHtml.AppendLine("<b>Ofertas novas:</b> $($newCods.Count)<br>")
+            [void]$sbHtml.AppendLine("<b>Ofertas descontinuadas:</b> $($discontCods.Count)")
+            [void]$sbHtml.AppendLine("</div>")
+
+            if ($changes.Count -gt 0) {
+                $sortedChanges = $changes | Sort-Object @{Expression = {
+                    try {
+                        $o = [double]::Parse(($_.Old -replace ',', '.'))
+                        $n = [double]::Parse(($_.New -replace ',', '.'))
+                        if ($o -ne 0) { [Math]::Abs(($n - $o) / $o) } else { 0 }
+                    } catch { 0 }
+                }; Descending = $true}
+
+                [void]$sbHtml.AppendLine("<h3>Alteracoes de preco</h3>")
+                [void]$sbHtml.AppendLine("<table><tr><th>Oferta</th><th>COD</th><th>Pot.</th><th>Cont.</th><th>Coluna</th><th>Antes</th><th>Depois</th><th>Delta</th></tr>")
+
+                $maxRows = [Math]::Min($sortedChanges.Count, 100)
+                for ($i = 0; $i -lt $maxRows; $i++) {
+                    $c = $sortedChanges[$i]
+                    $deltaStr = '-'
+                    try {
+                        $o = [double]::Parse(($c.Old -replace ',', '.'))
+                        $n = [double]::Parse(($c.New -replace ',', '.'))
+                        if ($o -ne 0) {
+                            $pct = [Math]::Round((($n - $o) / $o) * 100, 2)
+                            $cls = if ($pct -gt 0) { 'up' } elseif ($pct -lt 0) { 'down' } else { '' }
+                            $sgn = if ($pct -gt 0) { '+' } else { '' }
+                            $deltaStr = "<span class='$cls'>$sgn$pct" + [char]37 + "</span>"
+                        }
+                    } catch {}
+                    [void]$sbHtml.AppendLine("<tr><td>$($c.Nome)</td><td>$($c.Cod)</td><td>$($c.Pot)</td><td>$($c.Cont)</td><td>$($c.Col)</td><td>$($c.Old)</td><td>$($c.New)</td><td>$deltaStr</td></tr>")
+                }
+                [void]$sbHtml.AppendLine("</table>")
+                if ($changes.Count -gt 100) {
+                    [void]$sbHtml.AppendLine("<p><i>(top 100 alteracoes por magnitude; total $($changes.Count))</i></p>")
+                }
+            }
+
+            if ($newCods.Count -gt 0) {
+                [void]$sbHtml.AppendLine("<h3>Ofertas novas ($($newCods.Count))</h3>")
+                [void]$sbHtml.AppendLine("<table><tr><th>COD</th><th>Nome</th></tr>")
+                foreach ($cod in ($newCods | Select-Object -First 100)) {
+                    $nm = if ($codNameNew.ContainsKey($cod)) { $codNameNew[$cod] } else { '' }
+                    [void]$sbHtml.AppendLine("<tr><td>$cod</td><td>$nm</td></tr>")
+                }
+                [void]$sbHtml.AppendLine("</table>")
+            }
+
+            if ($discontCods.Count -gt 0) {
+                [void]$sbHtml.AppendLine("<h3>Ofertas descontinuadas ($($discontCods.Count))</h3>")
+                [void]$sbHtml.AppendLine("<table><tr><th>COD</th><th>Ultimo nome conhecido</th></tr>")
+                foreach ($cod in ($discontCods | Select-Object -First 100)) {
+                    $nm = if ($codNameOld.ContainsKey($cod)) { $codNameOld[$cod] } else { '' }
+                    [void]$sbHtml.AppendLine("<tr><td>$cod</td><td>$nm</td></tr>")
+                }
+                [void]$sbHtml.AppendLine("</table>")
+            }
+
+            [void]$sbHtml.AppendLine("</body></html>")
+
+            [System.IO.File]::WriteAllText($emailBodyPath, $sbHtml.ToString(), $writeEncDiff)
+        }
+    }
+}
+
 # === Rebuild Main folder (single merged file) ===
 $mainDir = "$base\Main"
 
@@ -216,7 +389,9 @@ function Compile-Merged {
 
 Compile-Merged -condFolder "$base\Histórico\Condições Comerciais" -precosFolder "$base\Histórico\Preços" -outputFile "$mainDir\ERSE_main.csv" -readEnc $readEnc -writeEnc $writeEnc -condKeepIdx $condKeepIdx -precosDropIdx $precosDropIdx
 
-[Console]::Write("$status; Main rebuilt")
+$finalMsg = "$status; Main rebuilt"
+if ($changeStats) { $finalMsg += "; $changeStats" }
+[Console]::Write($finalMsg)
 ```
 
 ### Action 3: Apresentar mensagem
@@ -224,12 +399,44 @@ Compile-Merged -condFolder "$base\Histórico\Condições Comerciais" -precosFold
 - Message: `%Result%`
 - Icon: Information
 
+### Action 4: Send change-alert email (only when there's a new snapshot)
+
+The PowerShell step writes an HTML report to `_state\email_body.html` whenever there's a new snapshot. This action picks it up and emails it via Outlook.
+
+**4a — Se** (Conditional)
+- Categoria: **Condições → Se**
+- Primeiro operando: `%Result%`
+- Operador: `Contains` / `Contém`
+- Segundo operando: `UPDATED:`
+
+**Inside the If block**:
+
+**4b — Ler texto do ficheiro**
+- Categoria: **Ficheiro → Ler texto do ficheiro**
+- Caminho: `%BASE%\_state\email_body.html`
+- Armazenar como: `Texto individual`
+- Codificação: `UTF-8`
+- Guardar em: `EmailHtml`
+
+**4c — Enviar mensagem de e-mail (Outlook)**
+- Categoria: **Outlook → Enviar mensagem de e-mail através do Outlook**
+- Conta: a tua conta Outlook (default)
+- Para: o teu email (ex: `nome@empresa.com`); separa múltiplos por `;`
+- Assunto: `ERSE — alterações detectadas (%Result%)`
+- Corpo: `%EmailHtml%`
+- O corpo é HTML: ✅ ligado
+- Anexos: nenhum
+
+**End if**
+
+> Se preferires SMTP em vez de Outlook (caso o Outlook não esteja instalado), troca por **Servidor de correio → Enviar e-mail** com SMTP server da Repsol, credenciais, etc.
+
 ## Outputs
 
 | Output | Meaning |
 |---|---|
-| `UPDATED: 2026-04-13_173154; Main rebuilt` | New ZIP downloaded, archived under that timestamp, Main files refreshed |
-| `NO_UPDATE: 2026-04-13_173154 already in Historico; Main rebuilt` | Current ERSE timestamp already exists locally — skipped download but still rebuilt Main |
+| `UPDATED: 2026-04-13_173154; Main rebuilt; 47 precos alterados; 3 novas; 1 descontinuadas` | New ZIP downloaded, archived, Main files refreshed, change-alert email sent via Action 4 |
+| `NO_UPDATE: 2026-04-13_173154 already in Historico; Main rebuilt` | Current ERSE timestamp already exists locally — skipped download (no email sent) |
 | `ERROR: ...` | Something broke; check `PsErrors` for details |
 
 ## What `ERSE_main.csv` looks like
