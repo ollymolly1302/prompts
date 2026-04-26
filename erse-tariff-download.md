@@ -183,7 +183,9 @@ if ($status -like 'UPDATED:*') {
 
             # Detect price changes — filter to Pot_Cont 3,45 and 6,9 only; round to 2 decimals before comparing
             $potFilter = @('3,45', '6,9')
-            $changes = New-Object System.Collections.ArrayList
+            $changes    = New-Object System.Collections.ArrayList
+            $withdrawn  = New-Object System.Collections.ArrayList
+            $reactivated = New-Object System.Collections.ArrayList
             for ($i = 1; $i -lt $newPrecos.Length; $i++) {
                 $r = $newPrecos[$i] -split ';'
                 if ($r.Length -lt 12) { continue }
@@ -206,52 +208,65 @@ if ($status -like 'UPDATED:*') {
                     try { if (-not [string]::IsNullOrEmpty($oldRaw)) { $oldNum = [double]::Parse(($oldRaw -replace ',', '.'), [System.Globalization.CultureInfo]::InvariantCulture); $oldRounded = ([Math]::Round($oldNum, 2)).ToString('0.00', [System.Globalization.CultureInfo]::InvariantCulture).Replace('.', ',') } } catch {}
                     try { if (-not [string]::IsNullOrEmpty($newRaw)) { $newNum = [double]::Parse(($newRaw -replace ',', '.'), [System.Globalization.CultureInfo]::InvariantCulture); $newRounded = ([Math]::Round($newNum, 2)).ToString('0.00', [System.Globalization.CultureInfo]::InvariantCulture).Replace('.', ',') } } catch {}
 
-                    if ($oldRounded -ne $newRounded -and -not ([string]::IsNullOrEmpty($oldRounded) -and [string]::IsNullOrEmpty($newRounded))) {
-                        # Skip rows where both values are zero (placeholder for "offer not available for this tariff")
-                        if ($oldRounded -eq '0,00' -and $newRounded -eq '0,00') { continue }
-                        $tarifaLabel = switch ($r[5]) {
-                            '1'     { 'Simples' }
-                            '2'     { 'Bi-horaria' }
-                            '3'     { 'Tri-horaria' }
-                            default { 'Gas' }
-                        }
-                        [void]$changes.Add([pscustomobject]@{
-                            Cod    = $cod
-                            Nome   = if ($codNameNew.ContainsKey($cod)) { $codNameNew[$cod] } else { $cod }
-                            Pot    = $r[1]
-                            Cont   = $r[5]
-                            Tarifa = $tarifaLabel
-                            Col    = $priceColNames[$j]
-                            Old    = $oldRounded
-                            New    = $newRounded
-                            OldNum = $oldNum
-                            NewNum = $newNum
-                        })
+                    $wasActive = ($oldNum -ne $null -and $oldNum -gt 0)
+                    $isActive  = ($newNum -ne $null -and $newNum -gt 0)
+
+                    $tarifaLabel = switch ($r[5]) {
+                        '1'     { 'Simples' }
+                        '2'     { 'Bi-horaria' }
+                        '3'     { 'Tri-horaria' }
+                        default { 'Gas' }
+                    }
+                    $entry = [pscustomobject]@{
+                        Cod    = $cod
+                        Nome   = if ($codNameNew.ContainsKey($cod)) { $codNameNew[$cod] } else { $cod }
+                        Pot    = $r[1]
+                        Cont   = $r[5]
+                        Tarifa = $tarifaLabel
+                        Col    = $priceColNames[$j]
+                        Old    = $oldRounded
+                        New    = $newRounded
+                        OldNum = $oldNum
+                        NewNum = $newNum
+                    }
+
+                    if ($wasActive -and -not $isActive) {
+                        [void]$withdrawn.Add($entry)
+                    } elseif (-not $wasActive -and $isActive) {
+                        [void]$reactivated.Add($entry)
+                    } elseif ($wasActive -and $isActive -and $oldRounded -ne $newRounded) {
+                        [void]$changes.Add($entry)
                     }
                 }
             }
 
-            # Deduplicate: same change across multiple Contagens collapses into one row with merged Tarifa labels
-            $grouped = $changes | Group-Object -Property { "$($_.Cod)|$($_.Pot)|$($_.Col)|$($_.Old)|$($_.New)" }
-            $deduped = New-Object System.Collections.ArrayList
-            foreach ($g in $grouped) {
-                $first = $g.Group[0]
-                $tarifas = ($g.Group | Select-Object -ExpandProperty Tarifa -Unique | Sort-Object) -join ' + '
-                [void]$deduped.Add([pscustomobject]@{
-                    Cod    = $first.Cod
-                    Nome   = $first.Nome
-                    Pot    = $first.Pot
-                    Tarifa = $tarifas
-                    Col    = $first.Col
-                    Old    = $first.Old
-                    New    = $first.New
-                    OldNum = $first.OldNum
-                    NewNum = $first.NewNum
-                })
+            # Deduplicate same change/withdrawal/reactivation across multiple Contagens — collapses into one row
+            $dedupeFn = {
+                param($list)
+                $grouped = $list | Group-Object -Property { "$($_.Cod)|$($_.Pot)|$($_.Col)|$($_.Old)|$($_.New)" }
+                $out = New-Object System.Collections.ArrayList
+                foreach ($g in $grouped) {
+                    $first = $g.Group[0]
+                    $tarifas = ($g.Group | Select-Object -ExpandProperty Tarifa -Unique | Sort-Object) -join ' + '
+                    [void]$out.Add([pscustomobject]@{
+                        Cod    = $first.Cod
+                        Nome   = $first.Nome
+                        Pot    = $first.Pot
+                        Tarifa = $tarifas
+                        Col    = $first.Col
+                        Old    = $first.Old
+                        New    = $first.New
+                        OldNum = $first.OldNum
+                        NewNum = $first.NewNum
+                    })
+                }
+                return ,$out
             }
-            $changes = $deduped
+            $changes     = & $dedupeFn $changes
+            $withdrawn   = & $dedupeFn $withdrawn
+            $reactivated = & $dedupeFn $reactivated
 
-            $changeStats = "$($changes.Count) precos alterados; $($newCods.Count) novas; $($discontCods.Count) descontinuadas"
+            $changeStats = "$($changes.Count) precos alterados; $($withdrawn.Count) retiradas; $($reactivated.Count) reativadas; $($newCods.Count) novas; $($discontCods.Count) descontinuadas"
 
             # Build HTML email body
             $sbHtml = New-Object System.Text.StringBuilder
@@ -269,6 +284,8 @@ if ($status -like 'UPDATED:*') {
             [void]$sbHtml.AppendLine("<b>Snapshot anterior:</b> $($prevFolder.Name)<br>")
             [void]$sbHtml.AppendLine("<b>Filtro:</b> apenas Pot_Cont = 3,45 e 6,9 kVA, arredondamento a 2 casas decimais<br>")
             [void]$sbHtml.AppendLine("<b>Alteracoes de preco (filtradas):</b> $($changes.Count)<br>")
+            [void]$sbHtml.AppendLine("<b>Ofertas retiradas (preco -> 0):</b> $($withdrawn.Count)<br>")
+            [void]$sbHtml.AppendLine("<b>Ofertas reativadas (0 -> preco):</b> $($reactivated.Count)<br>")
             [void]$sbHtml.AppendLine("<b>Ofertas novas:</b> $($newCods.Count)<br>")
             [void]$sbHtml.AppendLine("<b>Ofertas descontinuadas:</b> $($discontCods.Count)")
             [void]$sbHtml.AppendLine("</div>")
@@ -305,6 +322,26 @@ if ($status -like 'UPDATED:*') {
                 if ($changes.Count -gt 100) {
                     [void]$sbHtml.AppendLine("<p><i>(top 100 alteracoes por magnitude; total $($changes.Count))</i></p>")
                 }
+            }
+
+            if ($withdrawn.Count -gt 0) {
+                [void]$sbHtml.AppendLine("<h3>Ofertas retiradas ($($withdrawn.Count))</h3>")
+                [void]$sbHtml.AppendLine("<p style='font-size:9pt;color:#666'><i>Tinham preco em vigor no snapshot anterior e agora estao a 0 ou vazias. Tipicamente significa retirada de comercializacao - nao vendida a novos clientes mas pode continuar valida para clientes existentes em carteira.</i></p>")
+                [void]$sbHtml.AppendLine("<table><tr><th>Oferta</th><th>COD</th><th>Pot. (kVA)</th><th>Tarifa</th><th>Coluna</th><th>Preco anterior</th></tr>")
+                foreach ($w in $withdrawn) {
+                    [void]$sbHtml.AppendLine("<tr><td>$($w.Nome)</td><td>$($w.Cod)</td><td>$($w.Pot)</td><td>$($w.Tarifa)</td><td>$($w.Col)</td><td>$($w.Old)</td></tr>")
+                }
+                [void]$sbHtml.AppendLine("</table>")
+            }
+
+            if ($reactivated.Count -gt 0) {
+                [void]$sbHtml.AppendLine("<h3>Ofertas reativadas ($($reactivated.Count))</h3>")
+                [void]$sbHtml.AppendLine("<p style='font-size:9pt;color:#666'><i>Estavam a 0 ou vazias no snapshot anterior e agora tem preco. Pode indicar relancamento ou disponibilizacao a novos clientes.</i></p>")
+                [void]$sbHtml.AppendLine("<table><tr><th>Oferta</th><th>COD</th><th>Pot. (kVA)</th><th>Tarifa</th><th>Coluna</th><th>Preco actual</th></tr>")
+                foreach ($r2 in $reactivated) {
+                    [void]$sbHtml.AppendLine("<tr><td>$($r2.Nome)</td><td>$($r2.Cod)</td><td>$($r2.Pot)</td><td>$($r2.Tarifa)</td><td>$($r2.Col)</td><td>$($r2.New)</td></tr>")
+                }
+                [void]$sbHtml.AppendLine("</table>")
             }
 
             if ($newCods.Count -gt 0) {
