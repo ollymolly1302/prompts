@@ -207,11 +207,18 @@ if ($status -like 'UPDATED:*') {
                     try { if (-not [string]::IsNullOrEmpty($newRaw)) { $newNum = [double]::Parse(($newRaw -replace ',', '.'), [System.Globalization.CultureInfo]::InvariantCulture); $newRounded = ([Math]::Round($newNum, 2)).ToString('0.00', [System.Globalization.CultureInfo]::InvariantCulture).Replace('.', ',') } } catch {}
 
                     if ($oldRounded -ne $newRounded -and -not ([string]::IsNullOrEmpty($oldRounded) -and [string]::IsNullOrEmpty($newRounded))) {
+                        $tarifaLabel = switch ($r[5]) {
+                            '1'     { 'Simples' }
+                            '2'     { 'Bi-horaria' }
+                            '3'     { 'Tri-horaria' }
+                            default { 'Gas' }
+                        }
                         [void]$changes.Add([pscustomobject]@{
                             Cod    = $cod
                             Nome   = if ($codNameNew.ContainsKey($cod)) { $codNameNew[$cod] } else { $cod }
                             Pot    = $r[1]
                             Cont   = $r[5]
+                            Tarifa = $tarifaLabel
                             Col    = $priceColNames[$j]
                             Old    = $oldRounded
                             New    = $newRounded
@@ -254,7 +261,7 @@ if ($status -like 'UPDATED:*') {
                 }; Descending = $true}
 
                 [void]$sbHtml.AppendLine("<h3>Alteracoes de preco</h3>")
-                [void]$sbHtml.AppendLine("<table><tr><th>Oferta</th><th>COD</th><th>Pot.</th><th>Cont.</th><th>Coluna</th><th>Antes</th><th>Depois</th><th>Delta</th></tr>")
+                [void]$sbHtml.AppendLine("<table><tr><th>Oferta</th><th>COD</th><th>Pot. (kVA)</th><th>Tarifa</th><th>Coluna</th><th>Antes</th><th>Depois</th><th>Delta</th></tr>")
 
                 $maxRows = [Math]::Min($sortedChanges.Count, 100)
                 for ($i = 0; $i -lt $maxRows; $i++) {
@@ -270,7 +277,7 @@ if ($status -like 'UPDATED:*') {
                             $deltaStr = "<span class='$cls'>$sgn$pct" + [char]37 + "</span>"
                         }
                     } catch {}
-                    [void]$sbHtml.AppendLine("<tr><td>$($c.Nome)</td><td>$($c.Cod)</td><td>$($c.Pot)</td><td>$($c.Cont)</td><td>$($c.Col)</td><td>$($c.Old)</td><td>$($c.New)</td><td>$deltaStr</td></tr>")
+                    [void]$sbHtml.AppendLine("<tr><td>$($c.Nome)</td><td>$($c.Cod)</td><td>$($c.Pot)</td><td>$($c.Tarifa)</td><td>$($c.Col)</td><td>$($c.Old)</td><td>$($c.New)</td><td>$deltaStr</td></tr>")
                 }
                 [void]$sbHtml.AppendLine("</table>")
                 if ($changes.Count -gt 100) {
