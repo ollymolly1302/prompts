@@ -207,6 +207,8 @@ if ($status -like 'UPDATED:*') {
                     try { if (-not [string]::IsNullOrEmpty($newRaw)) { $newNum = [double]::Parse(($newRaw -replace ',', '.'), [System.Globalization.CultureInfo]::InvariantCulture); $newRounded = ([Math]::Round($newNum, 2)).ToString('0.00', [System.Globalization.CultureInfo]::InvariantCulture).Replace('.', ',') } } catch {}
 
                     if ($oldRounded -ne $newRounded -and -not ([string]::IsNullOrEmpty($oldRounded) -and [string]::IsNullOrEmpty($newRounded))) {
+                        # Skip rows where both values are zero (placeholder for "offer not available for this tariff")
+                        if ($oldRounded -eq '0,00' -and $newRounded -eq '0,00') { continue }
                         $tarifaLabel = switch ($r[5]) {
                             '1'     { 'Simples' }
                             '2'     { 'Bi-horaria' }
@@ -228,6 +230,26 @@ if ($status -like 'UPDATED:*') {
                     }
                 }
             }
+
+            # Deduplicate: same change across multiple Contagens collapses into one row with merged Tarifa labels
+            $grouped = $changes | Group-Object -Property { "$($_.Cod)|$($_.Pot)|$($_.Col)|$($_.Old)|$($_.New)" }
+            $deduped = New-Object System.Collections.ArrayList
+            foreach ($g in $grouped) {
+                $first = $g.Group[0]
+                $tarifas = ($g.Group | Select-Object -ExpandProperty Tarifa -Unique | Sort-Object) -join ' + '
+                [void]$deduped.Add([pscustomobject]@{
+                    Cod    = $first.Cod
+                    Nome   = $first.Nome
+                    Pot    = $first.Pot
+                    Tarifa = $tarifas
+                    Col    = $first.Col
+                    Old    = $first.Old
+                    New    = $first.New
+                    OldNum = $first.OldNum
+                    NewNum = $first.NewNum
+                })
+            }
+            $changes = $deduped
 
             $changeStats = "$($changes.Count) precos alterados; $($newCods.Count) novas; $($discontCods.Count) descontinuadas"
 
