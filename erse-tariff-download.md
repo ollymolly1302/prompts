@@ -130,11 +130,15 @@ $readEnc  = [System.Text.Encoding]::UTF8
 $writeEnc = New-Object System.Text.UTF8Encoding($false)
 
 # Cond columns kept (by header index in source CondComerciais.csv):
-#   2=NomeProposta, 4=Segmento, 5=TipoContagem, 10=Fornecimento,
-#   11=DuracaoContrato, 12=Data ini, 13=Data fim,
-#   21=FiltroPrecosIndex_ELE, 23=FiltroTarifaSocial, 25=FiltroNovosClientes,
-#   27=CustoServicos_c/IVA (€/ano), 35=DescontNovoCliente_c/IVA (€/ano)
-$condKeepIdx = @(2, 4, 5, 10, 11, 12, 13, 21, 23, 25, 27, 35)
+#   2 NomeProposta, 3 TxTModalidade, 4 Segmento, 5 TipoContagem,
+#   8 ConsIni_ELE, 9 ConsFim_ELE, 10 Fornecimento,
+#   11 DuracaoContrato, 12 Data ini, 13 Data fim,
+#   21 FiltroPrecosIndex_ELE, 23 FiltroTarifaSocial, 25 FiltroNovosClientes,
+#   27 CustoServicos, 28 ReembFixo,
+#   29 ReembTF_ELE, 30 ReembTW_ELE, 31 ReembW_ELE,
+#   35 DescontNovoCliente,
+#   36 Desc TF_ELE Novo, 37 Desc TW_ELE Novo, 38 Desc W_ELE Novo
+$condKeepIdx = @(2, 3, 4, 5, 8, 9, 10, 11, 12, 13, 21, 23, 25, 27, 28, 29, 30, 31, 35, 36, 37, 38)
 
 # Precos columns dropped (only ORD, idx 3). Contagem (idx 5) is kept now -- needed to slice tariff types.
 $precosDropIdx = @(3)
@@ -249,20 +253,30 @@ Single file. Each row is one Precos row enriched with the matching CondComerciai
 
 **Joined from CondComerciais** (on `COD_Proposta`):
 12. `NomeProposta` — commercial name
-13. `Segmento` — Dom / Ndom / Tod
-14. `TipoContagem` — supported contagem codes per offer (e.g. `123` = simples + bi + tri)
-15. `Fornecimento` — ELE / GN / DUAL
-16. `DuracaoContrato` — months
-17. `Data ini` — offer start date
-18. `Data fim` — offer end date
-19. `FiltroPrecosIndex_ELE` — indexed-price flag
-20. `FiltroTarifaSocial` — social tariff flag
-21. `FiltroNovosClientes` — new-customer-only flag
-22. `CustoServicos_c/IVA (€/ano)` — bundled services cost (annual, with VAT)
-23. `DescontNovoCliente_c/IVA (€/ano)` — new-customer discount value (€/year)
+13. `TxTModalidade` — offer modality / partnerships (e.g. "Apenas para clientes ACP", "TARIFA SANTANDER...")
+14. `Segmento` — Dom / Ndom / Tod
+15. `TipoContagem` — supported contagem codes per offer (e.g. `123` = simples + bi + tri)
+16. `ConsIni_ELE` — minimum applicable annual electricity consumption (kWh)
+17. `ConsFim_ELE` — maximum applicable annual electricity consumption (kWh)
+18. `Fornecimento` — ELE / GN / DUAL
+19. `DuracaoContrato` — months
+20. `Data ini` — offer start date
+21. `Data fim` — offer end date
+22. `FiltroPrecosIndex_ELE` — indexed-price flag
+23. `FiltroTarifaSocial` — social tariff flag
+24. `FiltroNovosClientes` — new-customer-only flag
+25. `CustoServicos_c/IVA (€/ano)` — bundled services cost (annual, with VAT)
+26. `ReembFixo (€/ano)` — fixed-amount reimbursement
+27. `ReembTF_ELE (%)` — % reimbursement on TF (electricity)
+28. `ReembTW_ELE (%)` — % reimbursement on TV (electricity variable term)
+29. `ReembW_ELE (€/kWh)` — €/kWh reimbursement (electricity)
+30. `DescontNovoCliente_c/IVA (€/ano)` — new-customer discount value (€/year)
+31. `Desc. TF_ELE (%) - Novo Cliente` — % discount on TF for new customers
+32. `Desc. TW_ELE (%) - Novo Cliente` — % discount on variable term for new customers
+33. `Desc. W_ELE (€/kWh) - Novo Cliente` — €/kWh discount for new customers
 
 **Added by the script:**
-24. `SnapshotDate` — when ERSE published this version (datetime)
+34. `SnapshotDate` — when ERSE published this version (datetime)
 
 The join is a left join with Precos as the left side: every price row is preserved; if a Precos row has no matching offer in CondComerciais (rare/never), the joined fields are empty.
 
