@@ -367,6 +367,10 @@ if ($status -like 'UPDATED:*') {
             [void]$sbHtml.AppendLine("</body></html>")
 
             [System.IO.File]::WriteAllText($emailBodyPath, $sbHtml.ToString(), $writeEncDiff)
+
+            # Friendly date file for the email subject (DD/MM/YYYY)
+            $friendlyDate = "$($datePart.Substring(6,2))/$($datePart.Substring(4,2))/$($datePart.Substring(0,4))"
+            [System.IO.File]::WriteAllText("$base\_state\last_date.txt", $friendlyDate, $writeEncDiff)
         }
     }
 }
@@ -496,24 +500,31 @@ The PowerShell step writes an HTML report to `_state\email_body.html` whenever t
 - Sem parâmetros para preencher.
 - Variável produzida: `OutlookInstance` (ou nome semelhante — o PAD gera por defeito).
 
-**4c — Ler texto do ficheiro**
+**4c — Ler texto do ficheiro (HTML body)**
 - Categoria: **Ficheiro → Ler texto do ficheiro**
 - Caminho: `%BASE%\_state\email_body.html`
 - Armazenar como: `Texto individual`
 - Codificação: `UTF-8`
 - Guardar em: `EmailHtml`
 
-**4d — Enviar mensagem de e-mail através do Outlook**
+**4d — Ler texto do ficheiro (data formatada)**
+- Categoria: **Ficheiro → Ler texto do ficheiro**
+- Caminho: `%BASE%\_state\last_date.txt`
+- Armazenar como: `Texto individual`
+- Codificação: `UTF-8`
+- Guardar em: `EmailDate`
+
+**4e — Enviar mensagem de e-mail através do Outlook**
 - Categoria: **Outlook → Enviar mensagem de e-mail através do Outlook**
 - **Instância do Outlook**: `%OutlookInstance%` (a variável produzida pelo passo 4b)
 - Conta: a tua conta Outlook (default)
 - Para: o teu email (ex: `nome@empresa.com`); separa múltiplos por `;`
-- Assunto: `ERSE — alterações detectadas (%Result%)`
+- Assunto: `ERSE - Alterações Detectadas (%EmailDate%)`
 - Corpo: `%EmailHtml%`
 - O corpo é HTML: ✅ ligado
 - Anexos: nenhum
 
-**4e — Fechar o Outlook** (opcional, mas boas práticas)
+**4f — Fechar o Outlook** (opcional, mas boas práticas)
 - Categoria: **Outlook → Fechar o Outlook**
 - Instância do Outlook: `%OutlookInstance%`
 
