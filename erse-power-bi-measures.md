@@ -2,6 +2,38 @@
 
 31 measures for the ERSE Competitive analysis. The recommended setup is a dedicated **Measures table** — a blank table that holds every measure and keeps them visually separated from the data table. Inside that table, measures are grouped into 7 folders.
 
+## ERSE_main — schema reference
+
+The exact column names produced by the auto-download flow + Power Query load are:
+
+| Column | Type | Notes |
+|---|---|---|
+| `COD_Proposta` | Text | Offer code; join key from CondComerciais. |
+| `COM` | Text | Comercializador (competitor code). |
+| `Data fim` | Date | Offer end date (note: name has a space). |
+| `Data ini` | Date | Offer start date (note: name has a space). |
+| `DuracaoContrato` | Decimal | Contract duration in months. |
+| `Escalao` | Text | Consumption band code. |
+| `NomeProposta` | Text | Offer commercial name. |
+| `Pot_Cont` | Decimal | Contracted power (kVA). |
+| `SnapshotDate` | Date/Time | When ERSE published this version. |
+| `TF` | Decimal | Termo Fixo electricity — fixed monthly charge. |
+| `TFGN` | Decimal | Termo Fixo gas natural. |
+| `TV\|TVFV\|TVP` | Decimal | Variable term — value depends on tariff: TV (simples), TVFV (bi-horária ponta/cheias), TVP (tri-horária ponta). **This is the "main" variable term used for competitive comparison.** |
+| `TVGN` | Decimal | Termo Variável gas natural. |
+| `TVV\|TVC` | Decimal | Off-peak / standard variable term: TVV (vazio bi-horária) or TVC (cheias tri-horária). |
+| `TVVz` | Decimal | Termo Variável Vazio — dedicated off-peak rate (tri-horária vazio). |
+
+**Important**: the `\|` character above is a literal pipe `|` (Markdown table escape). The actual column names contain the pipe character, e.g. `TV|TVFV|TVP`.
+
+In DAX, reference these columns with the pipe inside brackets:
+
+```
+'ERSE_main'[TV|TVFV|TVP]
+```
+
+The brackets handle special characters as literal — no quoting needed beyond that.
+
 ## Prerequisites in the model
 
 Before creating the measures, make sure the columns of `ERSE_main` have the right types in Power Query (Edit Queries → select column → Data Type):
@@ -201,7 +233,7 @@ Avg TV Latest =
 VAR LatestDate = [Latest Snapshot]
 RETURN
 CALCULATE(
-    AVERAGE('ERSE_main'[TV]),
+    AVERAGE('ERSE_main'[TV|TVFV|TVP]),
     'ERSE_main'[SnapshotDate] = LatestDate
 )
 ```
@@ -212,7 +244,7 @@ Min TV Latest =
 VAR LatestDate = [Latest Snapshot]
 RETURN
 CALCULATE(
-    MIN('ERSE_main'[TV]),
+    MIN('ERSE_main'[TV|TVFV|TVP]),
     'ERSE_main'[SnapshotDate] = LatestDate
 )
 ```
@@ -223,7 +255,7 @@ Max TV Latest =
 VAR LatestDate = [Latest Snapshot]
 RETURN
 CALCULATE(
-    MAX('ERSE_main'[TV]),
+    MAX('ERSE_main'[TV|TVFV|TVP]),
     'ERSE_main'[SnapshotDate] = LatestDate
 )
 ```
@@ -262,7 +294,7 @@ Avg TV Previous =
 VAR PrevDate = [Previous Snapshot]
 RETURN
 CALCULATE(
-    AVERAGE('ERSE_main'[TV]),
+    AVERAGE('ERSE_main'[TV|TVFV|TVP]),
     'ERSE_main'[SnapshotDate] = PrevDate
 )
 ```
