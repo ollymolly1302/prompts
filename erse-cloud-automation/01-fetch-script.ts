@@ -39,15 +39,25 @@ async function main(workbook: ExcelScript.Workbook): Promise<{
 }> {
     console.log("=== START FetchERSE ===");
 
-    // 1. Read SettingsURL from Config table (with fallback to public default)
+    // 1. Read SettingsURL from Config table (with fallback to public default).
+    //    Only override the default if the cell value looks like a real https URL —
+    //    Excel's auto-hyperlink can put the page TITLE in the cell instead of the URL,
+    //    which would break fetch() with a "Failed to parse URL" error. The startsWith
+    //    check protects against this.
     let settingsUrl = "https://simuladorprecos.erse.pt/config/Settings.json";
     try {
         const configSheet = workbook.getWorksheet("Config");
         const configTable = configSheet.getTable("tblConfig");
         const configRows = configTable.getRange().getValues();
         for (let i = 1; i < configRows.length; i++) {
-            if (configRows[i][0] === "SettingsURL" && configRows[i][1]) {
-                settingsUrl = configRows[i][1] as string;
+            const paramName = configRows[i][0];
+            const paramValue = configRows[i][1];
+            if (
+                paramName === "SettingsURL" &&
+                typeof paramValue === "string" &&
+                paramValue.toLowerCase().startsWith("https://")
+            ) {
+                settingsUrl = paramValue;
                 break;
             }
         }
