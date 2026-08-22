@@ -4,7 +4,9 @@
 
 Hola,
 
-Estoy trabajando en un benchmark interno de ofertas comerciales de electricidad y gas. El proyecto utiliza los datos públicos del simulador de precios de ERSE para comparar el posicionamiento de Repsol con el de otros comercializadores.
+Formo parte del equipo de **Estrategia**, no del equipo de IT. Estoy impulsando desde negocio un benchmark interno de ofertas comerciales de electricidad y gas y necesito orientación para alojarlo y operarlo correctamente dentro de la infraestructura corporativa.
+
+El proyecto utiliza los datos públicos del simulador de precios de ERSE para comparar el posicionamiento de Repsol con el de otros comercializadores.
 
 Actualmente consiste en varios scripts de Python que:
 
