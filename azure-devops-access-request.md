@@ -4,7 +4,20 @@
 
 Hola,
 
-Actualmente tengo acceso **Stakeholder** a la organización Azure DevOps `repsol-digital-team`, pero necesito implementar una automatización interna en Python para el Benchmark ERSE.
+Estoy trabajando en un benchmark interno de ofertas comerciales de electricidad y gas. El proyecto utiliza los datos públicos del simulador de precios de ERSE para comparar el posicionamiento de Repsol con el de otros comercializadores.
+
+Actualmente consiste en varios scripts de Python que:
+
+- comprueban diariamente si ERSE ha publicado nuevos datos;
+- descargan y validan los CSV oficiales;
+- mantienen un histórico de publicaciones;
+- generan un informe HTML autónomo con el ranking y las comparaciones;
+- ejecutan pruebas automáticas;
+- envían una notificación por correo cuando se detectan cambios.
+
+En este momento el código y la automatización se ejecutan mediante GitHub Actions en un repositorio privado externo. El objetivo es trasladar el repositorio, la ejecución programada, el histórico, las credenciales y el envío de correo a infraestructura corporativa de Repsol. El proceso debe funcionar aunque el ordenador de la usuaria esté apagado.
+
+He encontrado la organización Azure DevOps `repsol-digital-team`, pero actualmente solo tengo acceso **Stakeholder**, que no permite utilizar Azure Repos en proyectos privados.
 
 Necesitaría:
 
@@ -14,8 +27,8 @@ Necesitaría:
 - permisos para crear y ejecutar **pipelines YAML**;
 - acceso a un **agent pool**.
 
-La automatización consulta diariamente datos públicos de ERSE, genera un informe HTML y envía una notificación interna cuando se producen cambios. El objetivo es trasladar la ejecución desde GitHub a la infraestructura de Repsol, sin depender del ordenador de un usuario.
+El pipeline necesitará acceso HTTPS saliente a `simuladorprecos.erse.pt`. En una segunda fase también será necesario definir un buzón corporativo y el mecanismo autorizado para el envío automático de correo, preferiblemente Microsoft Graph.
 
-¿Podrían ayudarme a obtener estos accesos o indicarme el equipo responsable?
+¿Podrían confirmar si Azure DevOps es la plataforma adecuada, ayudarme a obtener estos accesos o indicarme el equipo responsable?
 
 Gracias.
