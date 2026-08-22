@@ -1,21 +1,21 @@
-# Pedido de acesso ao Azure DevOps
+# Solicitud de acceso a Azure DevOps
 
-**Assunto:** Pedido de acesso Basic e projeto Azure DevOps — Benchmark ERSE
+**Asunto:** Solicitud de acceso Basic y proyecto Azure DevOps — Benchmark ERSE
 
-Olá,
+Hola,
 
-Tenho atualmente acesso **Stakeholder** à organização Azure DevOps `repsol-digital-team`, mas preciso de implementar uma automatização interna em Python para o Benchmark ERSE.
+Actualmente tengo acceso **Stakeholder** a la organización Azure DevOps `repsol-digital-team`, pero necesito implementar una automatización interna en Python para el Benchmark ERSE.
 
-Precisava de:
+Necesitaría:
 
-- acesso **Basic** e perfil **Contributor**;
-- um projeto privado novo, idealmente `Benchmark ERSE`, ou indicação de um projeto existente autorizado;
-- acesso a **Azure Repos**;
-- permissão para criar e executar **pipelines YAML**;
-- acesso a um **agent pool**.
+- acceso **Basic** y perfil **Contributor**;
+- un nuevo proyecto privado, idealmente `Benchmark ERSE`, o la indicación de un proyecto existente autorizado;
+- acceso a **Azure Repos**;
+- permisos para crear y ejecutar **pipelines YAML**;
+- acceso a un **agent pool**.
 
-A automatização consulta diariamente dados públicos da ERSE, gera um relatório HTML e envia uma notificação interna quando existem alterações. O objetivo é retirar a execução do GitHub e colocá-la na infraestrutura Repsol, sem depender do computador de um utilizador.
+La automatización consulta diariamente datos públicos de ERSE, genera un informe HTML y envía una notificación interna cuando se producen cambios. El objetivo es trasladar la ejecución desde GitHub a la infraestructura de Repsol, sin depender del ordenador de un usuario.
 
-Podem ajudar-me com o acesso ou indicar a equipa responsável?
+¿Podrían ayudarme a obtener estos accesos o indicarme el equipo responsable?
 
-Obrigada.
+Gracias.
